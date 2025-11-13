@@ -16,24 +16,30 @@ from matplotlib.patches import Rectangle
 from pathlib import Path
 import sys
 
-# Import our Bayesian model
-from model import BayesianIntentionModel
+# Import unified model API
+from stag_hunt import BeliefModel
 
 # ============================================================================
 # CONFIGURATION - MODIFY THESE PATHS FOR YOUR LOCAL SETUP
 # ============================================================================
-DATA_DIR = Path('.')  # Current directory, or specify path
+DATA_DIR = Path('inputs')  # Directory containing trial CSV files
 OUTPUT_FILE = 'stag_hunt_trajectories_with_beliefs.mp4'
 
 # Animation settings
 FPS = 30
 TRANSITION_DURATION = 1.0  # seconds between trials
 
-# Bayesian model parameters (IMPROVED - maintains uncertainty)
+# Bayesian model parameters (using fitted decision model)
 PRIOR_STAG = 0.5  # Initial belief that partner is going for stag
-CONCENTRATION = 1.5  # Likelihood concentration (LOWER = less sharp updates)
 BELIEF_BOUNDS = (0.01, 0.99)  # Prevent beliefs hitting ceiling/floor
-FORGETTING_RATE = 0.01  # Slight decay toward prior
+
+# Fitted decision model parameters (from coordinated model)
+DECISION_MODEL_PARAMS = {
+    'temperature': 3.049,
+    'timing_tolerance': 0.865,
+    'action_noise': 10.0,
+    'n_directions': 8
+}
 
 # Colors (professional academic palette)
 PLAYER1_COLOR = '#E63946'  # Red (Chinese player)
@@ -74,17 +80,19 @@ outcome_labels = {
     5: 'Both caught stag (COOPERATION!)'
 }
 
-# Initialize Bayesian model
-print(f"Initializing Bayesian model (improved parameters):")
+# Initialize Bayesian model WITH DECISION MODEL (using unified API)
+print(f"Initializing Bayesian model with decision-based inference:")
 print(f"  Prior belief (stag): {PRIOR_STAG}")
-print(f"  Concentration (kappa): {CONCENTRATION} (lower = less sharp)")
-print(f"  Belief bounds: {BELIEF_BOUNDS} (prevents ceiling)")
-print(f"  Forgetting rate: {FORGETTING_RATE}")
-model = BayesianIntentionModel(
-    prior_stag=PRIOR_STAG, 
-    concentration=CONCENTRATION,
-    belief_bounds=BELIEF_BOUNDS,
-    forgetting_rate=FORGETTING_RATE,
+print(f"  Belief bounds: {BELIEF_BOUNDS}")
+print(f"  Decision model parameters:")
+print(f"    Temperature: {DECISION_MODEL_PARAMS['temperature']:.3f}")
+print(f"    Timing tolerance: {DECISION_MODEL_PARAMS['timing_tolerance']:.3f}")
+print(f"    Action noise: {DECISION_MODEL_PARAMS['action_noise']:.3f}")
+model = BeliefModel(
+    inference_type='decision',
+    decision_model={'model_type': 'coordinated', 'params': DECISION_MODEL_PARAMS},
+    prior_stag=PRIOR_STAG,
+    belief_bounds=BELIEF_BOUNDS
 )
 
 # Load all trials and run model
@@ -463,10 +471,12 @@ print(f"{'='*70}")
 print(f"File: {OUTPUT_FILE}")
 print(f"Duration: {total_frames/FPS:.1f} seconds")
 print(f"Cooperation rate: {coop_count}/{len(trial_animations)} trials")
-print(f"\nBayesian Model Parameters (Improved):")
+print(f"\nBayesian Model Parameters (Decision-Based Inference):")
 print(f"  Prior: {PRIOR_STAG}")
-print(f"  Concentration: {CONCENTRATION} (lower = maintains uncertainty)")
 print(f"  Bounds: {BELIEF_BOUNDS} (prevents ceiling/floor)")
-print(f"  Forgetting: {FORGETTING_RATE}")
+print(f"  Decision Model:")
+print(f"    Temperature: {DECISION_MODEL_PARAMS['temperature']:.3f}")
+print(f"    Timing tolerance: {DECISION_MODEL_PARAMS['timing_tolerance']:.3f}")
+print(f"    Action noise: {DECISION_MODEL_PARAMS['action_noise']:.3f}")
 
 plt.close()
