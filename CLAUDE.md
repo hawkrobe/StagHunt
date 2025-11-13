@@ -247,6 +247,195 @@ The goal is to test whether beliefs about partner cooperation actually influence
 
 ---
 
+## Mathematical Framework: Bayesian Theory of Mind
+
+This section provides the formal mathematical structure underlying the computational models.
+
+### 1. Bayesian Belief Updating
+
+Players maintain beliefs about their partner's intentions using Bayes' rule:
+
+**Prior belief at time t:**
+```
+b_t = P(partner goes for stag | observations up to time t)
+```
+
+**Bayes' rule update:**
+```
+b_{t+1} = P(stag | o_{t+1}) = P(o_{t+1} | stag) × b_t / Z
+```
+
+Where:
+- `o_{t+1}`: Observed partner movement (angle θ)
+- `P(o_{t+1} | stag)`: Likelihood of observation if partner goes for stag
+- `P(o_{t+1} | rabbit)`: Likelihood of observation if partner goes for rabbit
+- `Z`: Normalizing constant = `P(o_{t+1} | stag) × b_t + P(o_{t+1} | rabbit) × (1 - b_t)`
+
+**Log-space computation (for numerical stability):**
+```
+log b_{t+1} = log P(o_{t+1} | stag) + log b_t - log Z
+
+log Z = LogSumExp(
+    log P(o_{t+1} | stag) + log b_t,
+    log P(o_{t+1} | rabbit) + log(1 - b_t)
+)
+```
+
+### 2. Inverse Inference through Decision Model
+
+The key innovation is computing likelihoods using the decision model itself:
+
+**Likelihood computation:**
+```
+P(θ_observed | partner_intention) = Σ_i P(action_i | intention) × VonMises(θ_observed | μ_i, κ)
+```
+
+Where:
+- `P(action_i | intention)`: Probability partner chooses discrete action i given their intention
+- `VonMises(θ | μ, κ)`: von Mises distribution (circular normal) centered at μ with concentration κ
+- `κ` (action_noise): Motor noise parameter
+
+**von Mises probability density:**
+```
+VonMises(θ | μ, κ) = exp(κ cos(θ - μ)) / (2π I_0(κ))
+```
+
+Where `I_0(κ)` is the modified Bessel function of order 0.
+
+### 3. Decision Model with Coordination
+
+**Utility function (coordinated model):**
+```
+U(θ) = V_stag × P_coord × gain_stag(θ) + V_rabbit × gain_rabbit(θ)
+```
+
+Where:
+- `V_stag`: Current value of stag
+- `V_rabbit`: Current value of rabbit (typically 1.0)
+- `P_coord`: Coordination probability
+- `gain_target(θ)`: Spatial gain toward target from moving in direction θ
+
+**Spatial gain:**
+```
+gain_target(θ) = cos(θ - angle_to_target) × distance_weight
+
+distance_weight = 1 / (1 + dist_to_target / 100)
+```
+
+**Action selection (softmax):**
+```
+P(θ_i) = exp(β × U(θ_i)) / Σ_j exp(β × U(θ_j))
+```
+
+Where `β` (temperature) controls decision stochasticity.
+
+### 4. Coordination Probability Decomposition
+
+The coordination probability captures both intentional and temporal alignment:
+
+**Coordination probability:**
+```
+P_coord = b_partner × T_align
+```
+
+Where:
+- `b_partner`: Belief that partner intends to go for stag
+- `T_align`: Temporal alignment (can we arrive together?)
+
+**Timing alignment:**
+```
+T_align = exp(-0.5 × (Δt / τ)²)
+```
+
+Where:
+- `Δt = |t_player - t_partner|`: Difference in estimated arrival times
+- `t_player = dist_player_to_stag / speed`: Player's estimated arrival time
+- `t_partner = dist_partner_to_stag / speed`: Partner's estimated arrival time
+- `τ` (timing_tolerance): How much asynchrony can be tolerated
+
+**Fitted parameter:** τ = 0.865 (tight timing requirement explains low cooperation rate)
+
+### 5. Recursive Theory of Mind
+
+The model implements recursive reasoning about beliefs:
+
+**Player's belief update requires reasoning about partner's beliefs:**
+```
+P(partner_move | partner goes stag) depends on:
+  → What partner believes about player's intention
+  → Partner's coordination probability
+  → Partner's utility calculation
+```
+
+**Simplified assumption (symmetric beliefs):**
+```
+b_partner[player goes stag] ≈ b_player[partner goes stag]
+```
+
+This approximation avoids infinite recursion while capturing the key mutual reasoning structure.
+
+**Full recursive structure (not implemented):**
+```
+Level 0: b⁰ = prior (no reasoning)
+Level 1: b¹ = P(observation | partner assumes I'm Level 0)
+Level 2: b² = P(observation | partner assumes I'm Level 1)
+...
+```
+
+### 6. Complete Generative Model
+
+**Joint probability of trajectory and beliefs:**
+```
+P(trajectory, beliefs | params) =
+  P(b_0) × ∏_t P(b_{t+1} | b_t, o_t) × P(a_t | b_t, state_t, params)
+```
+
+Where:
+- `P(b_0)`: Prior belief distribution
+- `P(b_{t+1} | b_t, o_t)`: Belief update (Bayes' rule)
+- `P(a_t | b_t, state_t, params)`: Action probability (softmax decision)
+
+**Log-likelihood for parameter fitting:**
+```
+LL(params) = Σ_t log P(a_t^observed | b_t, state_t, params)
+```
+
+**Fitted parameters:**
+- Basic model: `[w_stag, w_rabbit, β, κ]` (4 parameters)
+- Coordinated model: `[β, τ, κ]` (3 parameters, uses actual payoffs)
+
+### 7. Key Mathematical Properties
+
+**Belief bounds:**
+```
+b_t ∈ [ε, 1-ε]  where ε = 0.01
+```
+Prevents beliefs from saturating at 0 or 1 (maintains uncertainty).
+
+**Von Mises concentration interpretation:**
+- κ → 0: Uniform circular distribution (high noise)
+- κ = 1: Moderate concentration (fitted value)
+- κ → ∞: Point mass at μ (deterministic execution)
+
+**Temperature interpretation:**
+- β → 0: Uniform action selection (random)
+- β ≈ 3: Fitted value (moderately deterministic)
+- β → ∞: Deterministic best response
+
+**Coordination difficulty emerges naturally:**
+```
+P_coord = b × T_align
+
+Cooperation requires:
+- High belief (b ≈ 1): Both believe partner cooperates
+- Good timing (T_align ≈ 1): Both can arrive simultaneously
+- Both conditions must hold (multiplicative)
+```
+
+With τ = 0.865, timing alignment drops rapidly with small position differences, explaining the observed 8.3% cooperation rate.
+
+---
+
 ## Model Architecture
 
 ### Core Idea
