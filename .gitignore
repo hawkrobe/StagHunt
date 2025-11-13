@@ -1,6 +1,9 @@
 # Ignore outputs directory (contains large video files)
 outputs/
 
+# Video files
+*.mp4
+
 # Python cache
 __pycache__/
 *.py[cod]
