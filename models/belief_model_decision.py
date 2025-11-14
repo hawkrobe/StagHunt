@@ -7,7 +7,7 @@ movements, providing principled inverse inference from actions to intentions.
 
 import numpy as np
 import pandas as pd
-from decision_model_coordinated import CoordinatedDecisionModel
+from models.decision_model_coordinated import CoordinatedDecisionModel
 
 
 class BayesianIntentionModelWithDecision:
@@ -142,27 +142,27 @@ class BayesianIntentionModelWithDecision:
         partner_believes_player_stag = belief_partner_stag
 
         # Hypothesis 1: Partner is going for stag
-        # Under this hypothesis, partner's belief about player going for stag
-        # affects their coordination probability
+        # Under this hypothesis, partner ONLY considers stag (pure intention)
+        # Model this by setting rabbit_value=0 so rabbit term drops out of utility
         likelihood_if_stag = self.likelihood_movement_given_intention(
             observed_angle,
             player_x, player_y,
             partner_x_prev, partner_y_prev,
             stag_x, stag_y, stag_value,
-            rabbit_x, rabbit_y, rabbit_value,
+            rabbit_x=rabbit_x, rabbit_y=rabbit_y, rabbit_value=0.0,  # Zero out rabbit!
             partner_believes_stag=partner_believes_player_stag
         )
 
         # Hypothesis 2: Partner is going for rabbit
-        # Under this hypothesis, coordination doesn't matter
-        # We can model this as partner having low belief about player going for stag
+        # Under this hypothesis, partner ONLY considers rabbit (pure intention)
+        # Model this by setting stag_value=0 so stag term drops out of utility
         likelihood_if_rabbit = self.likelihood_movement_given_intention(
             observed_angle,
             player_x, player_y,
             partner_x_prev, partner_y_prev,
-            stag_x, stag_y, stag_value,
-            rabbit_x, rabbit_y, rabbit_value,
-            partner_believes_stag=0.01  # Partner thinks player going for rabbit
+            stag_x, stag_y, stag_value=0.0,  # Zero out stag for pure rabbit intention
+            rabbit_x=rabbit_x, rabbit_y=rabbit_y, rabbit_value=rabbit_value,
+            partner_believes_stag=0.0  # Irrelevant since stag_value=0
         )
 
         # Bayes' rule (in log space for numerical stability)

@@ -37,10 +37,10 @@ BeliefModel:
 
 import numpy as np
 import pandas as pd
-from decision_model_basic import UtilityDecisionModel
-from decision_model_coordinated import CoordinatedDecisionModel
-from belief_model_distance import BayesianIntentionModel
-from belief_model_decision import BayesianIntentionModelWithDecision
+from models.decision_model_basic import UtilityDecisionModel
+from models.decision_model_coordinated import CoordinatedDecisionModel
+from models.belief_model_distance import BayesianIntentionModel
+from models.belief_model_decision import BayesianIntentionModelWithDecision
 
 
 class DecisionModel:

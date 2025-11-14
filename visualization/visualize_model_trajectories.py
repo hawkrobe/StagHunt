@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import glob
-from belief_model_distance import BayesianIntentionModel
-from decision_model_basic import UtilityDecisionModel
+from models.belief_model_distance import BayesianIntentionModel
+from models.decision_model_basic import UtilityDecisionModel
 
 
 def load_trial(filepath):

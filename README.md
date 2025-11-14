@@ -1,287 +1,193 @@
-# Stag Hunt Cooperation Task: Computational Modeling
+# Stag Hunt Cooperation Task - Computational Modeling
 
-**Robert D. Hawkins**
-**Social Interaction Lab, Stanford University**
-
-This repository contains computational models and analysis code for the Stag Hunt cooperation task with iEEG patients. The models implement Bayesian belief updating and utility-based decision-making to understand real-time coordination dynamics.
-
----
-
-## Quick Start
-
-```python
-from stag_hunt import DecisionModel, BeliefModel
-
-# Recommended: Coordinated decision model
-decision_model = DecisionModel(
-    model_type='coordinated',
-    params={'temperature': 3.049, 'timing_tolerance': 0.865, 'action_noise': 10.0}
-)
-
-# Recommended: Decision-based belief inference
-belief_model = BeliefModel(
-    inference_type='decision',
-    decision_model=decision_model
-)
-
-# Run belief updating on trial
-trial_with_beliefs = belief_model.run_trial(trial_data)
-```
+**Bayesian Theory of Mind for Social Coordination**  
+Robert D. Hawkins, Stanford University  
+November 2025
 
 ---
 
 ## Repository Structure
 
-### Core Models
-
-| File | Description |
-|------|-------------|
-| **`stag_hunt.py`** | **Unified API** - Main entrypoint with clean interface for all model variants (recommended) |
-| `belief_model_distance.py` | Distance-based belief inference using movement heuristics |
-| `belief_model_decision.py` | Decision-based belief inference via inverse inference (recommended) |
-| `decision_model_basic.py` | Basic utility model with free weight parameters |
-| `decision_model_coordinated.py` | Coordinated model with explicit timing constraints (recommended) |
-
-### Analysis Scripts
-
-| File | Description |
-|------|-------------|
-| `compare_models_fair.py` | Fair comparison of WITH vs WITHOUT belief models (both independently fit) |
-| `fit_coordinated_model.py` | Fit the coordinated decision model with explicit timing |
-| `fit_parameters_fast.py` | Fast parameter fitting for basic decision model |
-| `fit_parameters.py` | Original parameter fitting (slower) |
-
-### Visualization
-
-| File | Description |
-|------|-------------|
-| `make_video.py` | **Main visualization** - Creates video with trajectories and belief dynamics |
-| `visualize_model_trajectories.py` | Simulates and visualizes model-generated trajectories vs actual |
-
-### Development/Testing
-
-| File | Description |
-|------|-------------|
-| `test_decision_model.py` | Initial testing of decision model with discrete likelihood |
-| `test_action_space.py` | Tests action space granularity (8, 16, 32, 64 directions) |
-| `test_continuous_likelihood.py` | Validates continuous likelihood approach |
-
-### Documentation
-
-| File | Description |
-|------|-------------|
-| `CLAUDE.md` | **Detailed technical documentation** - Full analysis notes, model specifications, results |
-| `README.md` | This file - Quick reference and workflow guide |
+```
+StagHunt/
+├── models/              # Core model implementations
+├── fitting/             # Parameter fitting scripts
+├── analysis/            # Analysis and hypothesis testing
+├── visualization/       # Video generation and plotting
+├── tests/              # Pytest test suite (75 tests)
+├── inputs/             # Raw trial data (CSV files)
+├── enriched_trials/    # Trials with model-based regressors
+│
+├── stag_hunt.py        # Main entry point
+├── CLAUDE.md           # Full modeling documentation
+├── NEURAL_REGRESSORS_SUMMARY.md  # Neural analysis guide
+└── README.md           # This file
+```
 
 ---
 
-## Recommended Workflow
+## Quick Start
 
-### 1. Generate Beliefs and Visualization
-
-The main output for neural data analysis is the belief timeseries. Generate it using:
+### 1. Run the Integrated Model (Recommended)
 
 ```bash
-python make_video.py
+python models/hierarchical_model_with_cross_trial_learning.py
 ```
 
-**What it does:**
-- Loads all 12 trials from `inputs/`
-- Runs decision-based Bayesian model with fitted parameters
-- Generates beliefs about partner intentions at each timestep
-- Creates visualization video showing trajectories + belief dynamics
+Generates `integrated_model_lr0.3.csv` with all neural regressors.
 
-**Output:**
-- `stag_hunt_trajectories_with_beliefs.mp4` - Video visualization
-- Belief timeseries embedded in trial data (for neural analysis)
-
-**Model Configuration:**
-- Uses `model_with_decision.py` for principled inverse inference
-- Fitted parameters: temp=3.049, timing_tol=0.865, action_noise=10.0
-
-### 2. Model Comparison and Validation
-
-To verify that beliefs improve predictions:
+### 2. Generate Visualization  
 
 ```bash
-python compare_models_fair.py
+python visualization/make_video_belief_focus.py
 ```
 
-**What it does:**
-- Fits decision model WITH beliefs (dynamic from Bayesian model)
-- Fits decision model WITHOUT beliefs (beliefs fixed at 1.0)
-- Compares log-likelihood, AIC, BIC
-- Shows parameter differences
+Creates `stag_hunt_belief_primary.mp4` showing belief dynamics + cross-trial learning.
 
-**Expected result:**
-- WITH beliefs: LL ≈ -5952
-- WITHOUT beliefs: LL ≈ -6033
-- Improvement: ~80 log-likelihood points
-
-### 3. Simulate Model Trajectories
-
-To validate that the model produces reasonable behavior:
+### 3. Fit Parameters
 
 ```bash
-python visualize_model_trajectories.py
+python fitting/fit_model.py --model integrated
 ```
 
-**What it does:**
-- Uses fitted decision model to simulate complete trajectories
-- Compares simulated paths to actual player movements
-- Generates side-by-side visualizations
+Optimizes: learning_rate, goal_temperature, execution_temperature, timing_tolerance
 
-**Output:**
-- `outputs/trajectory_trial{N}.png` - Actual vs simulated paths
+See all models: `python fitting/fit_model.py --list`
+
+---
+
+## Key Files
+
+### Models (`models/`)
+
+**Primary:**
+- `hierarchical_model_with_cross_trial_learning.py` - **MAIN MODEL** ⭐
+- `hierarchical_goal_model.py` - Hierarchical decision model
+- `belief_model_decision.py` - Bayesian belief updating
+- `model_comparison_framework.py` - Model comparison framework
+
+**Baselines:**
+- `distance_with_random_tiebreak.py` - Distance-based baseline
+
+### Fitting (`fitting/`)
+
+- `fit_model.py` - **Unified fitting interface** ⭐
+  - Fit any model: `--model integrated|hierarchical|distance|distance_tiebreak`
+  - List models: `--list`
+  - Save results: `--output results.json`
+
+### Analysis (`analysis/`)
+
+- `analyze_belief_as_primary_regressor.py` - **Why belief is primary** ⭐
+- `extract_neural_regressors.py` - Extract neural regressors
+- `analyze_cross_trial_learning.py` - Cross-trial dynamics
+
+### Visualization (`visualization/`)
+
+- `make_video_belief_focus.py` - **Main video** ⭐
+- `make_video_coordination_focus.py` - Emphasizes P_coord
+- `make_video_with_regressors.py` - Shows all regressors
+
+---
+
+## Neural Regressors
+
+### Primary: BELIEF
+
+**Variable:** `p1_belief_p2_stag`, `p2_belief_p1_stag`
+
+**Definition:** Continuous probability [0,1] that partner will cooperate
+
+**Why primary:**
+- Pure social prediction (unconfounded)
+- Bayesian posterior updated moment-by-moment
+- Strong discrimination: Cooperation (0.88) vs. Defection (0.38)
+
+**Neural predictions:**
+- TPJ/mPFC: Belief ramping
+- vmPFC: Belief × value integration
+- Striatum/ACC: Belief prediction errors
+
+### Secondary Regressors
+
+- `p1/p2_cross_trial_expectation` - Slow cross-trial learning
+- `p1/p2_EU_stag` - Expected utility of cooperation
+- `p1/p2_P_coord` - Coordination probability
+- `p1/p2_P_choose_stag` - Choice probabilities
+
+See `NEURAL_REGRESSORS_SUMMARY.md` for details.
+
+---
+
+## Model Architecture
+
+### Integrated Hierarchical Model
+
+**Three cognitive levels:**
+
+1. **Cross-Trial Learning** (slow)
+   - Updates: `Expectation_t = (1-α) × Expectation_{t-1} + α × FinalBelief_{t-1}`
+   
+2. **Within-Trial Beliefs** (fast)
+   - Bayesian updates from partner movements
+   - Produces primary regressor: `belief`
+   
+3. **Hierarchical Decisions**
+   - Goal selection (strategic)
+   - Plan execution (motor)
 
 ---
 
 ## Key Results
 
-### Model Comparison
+**Belief Dynamics - Cooperation Trial:**
+- Start: 0.09, 0.16 (pessimistic)
+- End: 0.99, 0.99 (mutual recognition!)
+- Change: +0.90, +0.83
 
-| Model | Parameters | Log-Likelihood | Interpretation |
-|-------|-----------|----------------|----------------|
-| **Coordinated** (recommended) | 3: temp, timing_tol, noise | -5952.65 | Uses actual payoffs + explicit coordination |
-| **Original with beliefs** | 4: w_stag, w_rabbit, temp, noise | -5952.22 | Free weights (w_ratio=1.76 unexplained) |
-| **Without beliefs** | 4: w_stag, w_rabbit, temp, noise | -6032.85 | Shows beliefs matter (+80 LL) |
-
-**Key Insight:** The coordinated model achieves identical fit to the flexible-weight model but with:
-- **Fewer parameters** (3 vs 4)
-- **Actual payoffs** instead of free weights
-- **Explicit timing** mechanism explaining why cooperation is difficult
-
-### Fitted Parameters (Coordinated Model)
-
-```python
-temperature = 3.049        # Moderately deterministic decisions
-timing_tolerance = 0.865   # Players tolerate ~0.86 time units of asynchrony
-action_noise = 10.0        # High motor variability (hit upper bound)
-```
-
-**Interpretation:**
-- Tight timing tolerance (0.86) explains low cooperation rate
-- Players make fairly decisive choices (temp~3)
-- Substantial motor noise in joystick control
+**Belief Dynamics - Defection Trials:**
+- Mean: 0.38-0.52 (low/uncertain)
+- Collapse to ~0.01 when partner defects
 
 ---
 
-## Data Files
+## Testing
 
-### Input Data
+The repository includes a comprehensive pytest test suite with 75 tests.
 
-- `inputs/stag_hunt_coop_trial*.csv` - 12 trials from August 24, 2024
-  - Position data for players, stag, rabbit (~20-40 Hz)
-  - Changing reward values (`value` column)
-  - Event outcomes (catch events)
-
-### Output Data
-
-- `outputs/trajectory_trial*.png` - Simulated vs actual trajectories
-- `stag_hunt_trajectories_with_beliefs.mp4` - Main visualization video
-
----
-
-## Model Details
-
-### Bayesian Belief Updating
-
-The recommended `model_with_decision.py` implements inverse inference:
-
-```python
-# Compute P(observed_movement | partner_intention) using decision model
-likelihood_if_stag = decision_model.get_likelihood(
-    observed_angle,
-    belief_partner_going_for_stag=high
-)
-
-likelihood_if_rabbit = decision_model.get_likelihood(
-    observed_angle,
-    belief_partner_going_for_stag=low
-)
-
-# Bayes' rule
-belief_new = (likelihood_if_stag * belief_old) / normalizer
-```
-
-**Advantages over distance-based model:**
-- Principled likelihood computation
-- Accounts for coordination constraints
-- Uses fitted parameters from actual data
-- More realistic uncertainty quantification
-
-### Decision Model
-
-The coordinated decision model (`decision_model_coordinated.py`) computes:
-
-```python
-# Utility of moving toward stag
-u_stag = stag_value × coordination_prob × gain_toward_stag
-
-# Coordination probability
-coordination_prob = belief_partner_stag × timing_alignment
-
-# Timing alignment (Gaussian)
-timing_alignment = exp(-0.5 × (time_diff / tolerance)²)
-
-# Action selection (softmax)
-P(action) ∝ exp(temperature × utility(action))
-```
-
-**Key features:**
-- Endogenizes coordination difficulty via timing
-- No free weight parameters (uses actual payoffs)
-- Naturally explains low cooperation rates
-
----
-
-## Requirements
-
-```python
-numpy
-pandas
-scipy
-matplotlib
-```
-
-For video generation:
+### Run all tests
 ```bash
-ffmpeg  # Required by matplotlib.animation
+pytest tests/ -v
 ```
+
+### Run specific test modules
+```bash
+pytest tests/test_belief_dynamics.py -v          # 11 tests for belief updating
+pytest tests/test_model_comparison.py -v         # 8 tests comparing models
+pytest tests/test_decision_models.py -v          # 22 tests for decision models
+```
+
+### Test coverage
+- Belief dynamics and updating (11 tests)
+- Model comparison (8 tests)
+- Decision model components (22 tests)
+- Pure intention modeling (13 tests)
+- Diagnostic tests (21 tests)
+
+See `tests/README.md` for detailed documentation.
 
 ---
 
-## Citation
+## Documentation
 
-```
-Hawkins, R. D. (2025). Computational modeling of real-time coordination
-in the Stag Hunt task. Social Interaction Lab, Stanford University.
-```
-
----
-
-## Notes
-
-- See `CLAUDE.md` for detailed technical documentation
-- All models use 8-direction action space for computational efficiency
-- Continuous likelihood evaluation prevents discretization artifacts
-- Fitted parameters from `compare_models_fair.py` and `fit_coordinated_model.py`
+- **README.md** (this file) - Quick reference
+- **CLAUDE.md** - Full modeling history
+- **NEURAL_REGRESSORS_SUMMARY.md** - Neural analysis guide
+- **tests/README.md** - Test suite documentation
 
 ---
 
-## Future Extensions
+## Contact
 
-**Immediate:**
-- [ ] Cross-validation on held-out trials
-- [ ] Individual parameter fits (Chinese vs US patients)
-- [ ] Sensitivity analysis for key parameters
-
-**Short-term:**
-- [ ] Integration with iEEG neural data
-- [ ] Condition-specific analysis (TI vs CRD, opponent framing)
-- [ ] Hierarchical Bayesian parameter estimation
-
-**Long-term:**
-- [ ] Level-k strategic reasoning models
-- [ ] Value-sensitive belief updating
-- [ ] Neural correlates of beliefs and utilities
+Robert D. Hawkins
+Social Interaction Lab, Stanford University

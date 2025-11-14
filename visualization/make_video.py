@@ -26,19 +26,19 @@ DATA_DIR = Path('inputs')  # Directory containing trial CSV files
 OUTPUT_FILE = 'stag_hunt_trajectories_with_beliefs.mp4'
 
 # Animation settings
-FPS = 30
+FPS = 15  # Reduced from 30 for faster generation
 TRANSITION_DURATION = 1.0  # seconds between trials
 
-# Bayesian model parameters (using fitted decision model)
+# Bayesian model parameters (using decision-based inverse planning)
 PRIOR_STAG = 0.5  # Initial belief that partner is going for stag
 BELIEF_BOUNDS = (0.01, 0.99)  # Prevent beliefs hitting ceiling/floor
 
-# Fitted decision model parameters (from coordinated model)
+# Decision model parameters (OPTIMAL values from parameter fitting)
 DECISION_MODEL_PARAMS = {
-    'temperature': 3.049,
-    'timing_tolerance': 0.865,
-    'action_noise': 10.0,
-    'n_directions': 8
+    'temperature': 5.0,          # FITTED: 5.0 optimal after pure intention fix (was 3.049)
+    'timing_tolerance': 150.0,   # FIXED: 150.0 (was 0.865, too strict)
+    'action_noise': 5.0,         # FIXED: 5.0 (was 10.0, too noisy)
+    'n_directions': 8            # Discrete action space
 }
 
 # Colors (professional academic palette)
@@ -80,19 +80,19 @@ outcome_labels = {
     5: 'Both caught stag (COOPERATION!)'
 }
 
-# Initialize Bayesian model WITH DECISION MODEL (using unified API)
-print(f"Initializing Bayesian model with decision-based inference:")
+# Initialize Bayesian model WITH DECISION-BASED INVERSE PLANNING (using unified API)
+print(f"Initializing Bayesian model with decision-based inverse planning:")
 print(f"  Prior belief (stag): {PRIOR_STAG}")
 print(f"  Belief bounds: {BELIEF_BOUNDS}")
 print(f"  Decision model parameters:")
 print(f"    Temperature: {DECISION_MODEL_PARAMS['temperature']:.3f}")
-print(f"    Timing tolerance: {DECISION_MODEL_PARAMS['timing_tolerance']:.3f}")
-print(f"    Action noise: {DECISION_MODEL_PARAMS['action_noise']:.3f}")
+print(f"    Timing tolerance: {DECISION_MODEL_PARAMS['timing_tolerance']:.1f} (FIXED)")
+print(f"    Action noise: {DECISION_MODEL_PARAMS['action_noise']:.1f} (FIXED)")
 model = BeliefModel(
     inference_type='decision',
-    decision_model={'model_type': 'coordinated', 'params': DECISION_MODEL_PARAMS},
     prior_stag=PRIOR_STAG,
-    belief_bounds=BELIEF_BOUNDS
+    belief_bounds=BELIEF_BOUNDS,
+    decision_model={'model_type': 'coordinated', 'params': DECISION_MODEL_PARAMS}
 )
 
 # Load all trials and run model
@@ -471,12 +471,12 @@ print(f"{'='*70}")
 print(f"File: {OUTPUT_FILE}")
 print(f"Duration: {total_frames/FPS:.1f} seconds")
 print(f"Cooperation rate: {coop_count}/{len(trial_animations)} trials")
-print(f"\nBayesian Model Parameters (Decision-Based Inference):")
+print(f"\nBayesian Model Parameters (Decision-Based Inverse Planning):")
 print(f"  Prior: {PRIOR_STAG}")
 print(f"  Bounds: {BELIEF_BOUNDS} (prevents ceiling/floor)")
 print(f"  Decision Model:")
 print(f"    Temperature: {DECISION_MODEL_PARAMS['temperature']:.3f}")
-print(f"    Timing tolerance: {DECISION_MODEL_PARAMS['timing_tolerance']:.3f}")
-print(f"    Action noise: {DECISION_MODEL_PARAMS['action_noise']:.3f}")
+print(f"    Timing tolerance: {DECISION_MODEL_PARAMS['timing_tolerance']:.1f} (FIXED)")
+print(f"    Action noise: {DECISION_MODEL_PARAMS['action_noise']:.1f} (FIXED)")
 
 plt.close()
