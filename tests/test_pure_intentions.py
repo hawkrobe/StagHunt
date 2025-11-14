@@ -22,7 +22,7 @@ class TestPureIntentions:
     @pytest.fixture
     def trial6_data(self):
         """Load Trial 6 for testing."""
-        df = pd.read_csv('inputs/stag_hunt_coop_trial6_2024_08_24_0848.csv')
+        df = pd.read_csv('data/stag_hunt_coop_trial6_2024_08_24_0848.csv')
         if 'plater1_y' in df.columns:
             df = df.rename(columns={'plater1_y': 'player1_y'})
         return df

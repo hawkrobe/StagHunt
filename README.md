@@ -10,15 +10,16 @@ November 2025
 
 ```
 StagHunt/
-├── models/              # Core model implementations
-├── fitting/             # Parameter fitting scripts
+├── models/              # Core model implementations & fitting
 ├── analysis/            # Analysis and hypothesis testing
 ├── visualization/       # Video generation and plotting
 ├── tests/              # Pytest test suite (75 tests)
-├── inputs/             # Raw trial data (CSV files)
-├── enriched_trials/    # Trials with model-based regressors
+├── data/               # Data files
+│   ├── trial_*.csv              # Raw trial data
+│   └── enriched_trials/         # Trials with model-based regressors
 │
-├── stag_hunt.py        # Main entry point
+├── stag_hunt.py        # Main entry point & fitting interface
+├── fitted_params.json  # Fitted model parameters (updated by --fit)
 ├── CLAUDE.md           # Full modeling documentation
 ├── NEURAL_REGRESSORS_SUMMARY.md  # Neural analysis guide
 └── README.md           # This file
@@ -44,15 +45,24 @@ python visualization/make_video_belief_focus.py
 
 Creates `stag_hunt_belief_primary.mp4` showing belief dynamics + cross-trial learning.
 
-### 3. Fit Parameters
+### 3. Fit Parameters (Recommended First Step)
 
 ```bash
-python fitting/fit_model.py --model integrated
+# Fit model and save as defaults
+python stag_hunt.py --fit integrated
 ```
 
-Optimizes: learning_rate, goal_temperature, execution_temperature, timing_tolerance
+This will:
+1. Optimize parameters (learning_rate, goal_temperature, execution_temperature, timing_tolerance)
+2. Save fitted values to `fitted_params.json`
+3. Make them available as defaults for all model instantiations
 
-See all models: `python fitting/fit_model.py --list`
+**Alternative:** Direct fitting without updating defaults
+```bash
+python models/fit.py --model integrated --save-defaults
+```
+
+See all models: `python models/fit.py --list`
 
 ---
 
@@ -69,9 +79,9 @@ See all models: `python fitting/fit_model.py --list`
 **Baselines:**
 - `distance_with_random_tiebreak.py` - Distance-based baseline
 
-### Fitting (`fitting/`)
+### Fitting (`models/`)
 
-- `fit_model.py` - **Unified fitting interface** ⭐
+- `fit.py` - **Unified fitting interface** ⭐
   - Fit any model: `--model integrated|hierarchical|distance|distance_tiebreak`
   - List models: `--list`
   - Save results: `--output results.json`

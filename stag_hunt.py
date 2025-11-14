@@ -37,10 +37,29 @@ BeliefModel:
 
 import numpy as np
 import pandas as pd
+import json
+import os
 from models.decision_model_basic import UtilityDecisionModel
 from models.decision_model_coordinated import CoordinatedDecisionModel
 from models.belief_model_distance import BayesianIntentionModel
 from models.belief_model_decision import BayesianIntentionModelWithDecision
+
+
+def load_fitted_params(config_path='fitted_params.json'):
+    """
+    Load fitted parameters from config file.
+
+    Returns:
+    --------
+    dict : Model parameters, or None if file doesn't exist
+    """
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return None
+    return None
 
 
 class DecisionModel:
@@ -73,22 +92,18 @@ class DecisionModel:
         self.model_type = model_type
 
         if params is None:
-            # Use fitted defaults
-            if model_type == 'coordinated':
-                params = {
-                    'temperature': 3.049,
-                    'timing_tolerance': 0.865,
-                    'action_noise': 10.0,
-                    'n_directions': 8
-                }
-            elif model_type == 'basic':
-                params = {
-                    'temperature': 9.39,
-                    'w_stag': 4.98,
-                    'w_rabbit': 8.76,
-                    'action_noise': 0.73,
-                    'n_directions': 8
-                }
+            # Load from fitted_params.json (required)
+            fitted_params = load_fitted_params()
+
+            if fitted_params is None or model_type not in fitted_params:
+                raise ValueError(
+                    f"No fitted parameters found for model '{model_type}'.\n"
+                    f"Please run: python stag_hunt.py --fit {model_type}"
+                )
+
+            # Use fitted parameters from config
+            params = {k: v for k, v in fitted_params[model_type].items()
+                     if k not in ['description', 'fit_info']}
 
         self.params = params
 
@@ -208,36 +223,55 @@ def get_recommended_models():
 
 
 if __name__ == '__main__':
-    """Test the unified interface."""
-    print("Testing unified model interface...\n")
+    import argparse
+    import sys
 
-    # Test 1: Recommended configuration
-    print("="*70)
-    print("Test 1: Recommended configuration")
-    print("="*70)
-    decision_model, belief_model = get_recommended_models()
-    print(f"Decision model: {decision_model}")
-    print(f"Belief model: {belief_model}")
+    parser = argparse.ArgumentParser(
+        description='Stag Hunt unified model interface',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Fit a model and save as defaults
+  python stag_hunt.py --fit integrated
 
-    # Test 2: Custom configuration
-    print("\n" + "="*70)
-    print("Test 2: Custom configuration")
-    print("="*70)
-
-    # Basic decision model
-    decision_basic = DecisionModel(
-        model_type='basic',
-        params={'temperature': 5.0, 'w_stag': 1.0, 'w_rabbit': 2.0, 'action_noise': 1.0}
+  # Test the unified interface
+  python stag_hunt.py
+        """
     )
-    print(f"Basic decision model: {decision_basic}")
+    parser.add_argument('--fit', choices=['integrated', 'hierarchical', 'distance', 'distance_tiebreak'],
+                       help='Fit model and save parameters as defaults')
+    parser.add_argument('--method', default='L-BFGS-B',
+                       help='Optimization method for fitting (default: L-BFGS-B)')
 
-    # Distance-based belief
-    belief_distance = BeliefModel(
-        inference_type='distance',
-        concentration=2.0
-    )
-    print(f"Distance belief model: {belief_distance}")
+    args = parser.parse_args()
 
-    print("\n" + "="*70)
-    print("All tests passed!")
+    # Handle --fit flag
+    if args.fit:
+        print(f"Fitting model '{args.fit}'...\n")
+        from models.fit import fit_model, save_as_defaults
+
+        # Run fitting
+        results = fit_model(args.fit, method=args.method, verbose=True)
+
+        # Save as defaults
+        save_as_defaults(results, verbose=True)
+
+        print(f"\n✓ Model '{args.fit}' fitted and saved as defaults")
+        print(f"  You can now use: DecisionModel(model_type='{args.fit}')")
+        sys.exit(0)
+
+    # Otherwise show usage example
+    print("Stag Hunt Unified Model Interface")
+    print("="*70)
+    print("\nUsage examples:")
+    print("\n1. Use fitted defaults:")
+    print("   from stag_hunt import DecisionModel, BeliefModel")
+    print("   decision_model = DecisionModel(model_type='coordinated')")
+    print("   belief_model = BeliefModel(inference_type='decision', decision_model=decision_model)")
+    print("\n2. Use custom parameters:")
+    print("   decision_model = DecisionModel(model_type='basic',")
+    print("                                  params={'temperature': 5.0, 'w_stag': 1.0, ...})")
+    print("\n3. Fit new defaults:")
+    print("   python stag_hunt.py --fit integrated")
+    print("\nFor tests, run: pytest tests/")
     print("="*70)

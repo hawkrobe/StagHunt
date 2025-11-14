@@ -23,7 +23,7 @@ import glob
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-DATA_DIR = 'enriched_trials'  # Directory with enriched trial files
+DATA_DIR = 'data/enriched_trials'  # Directory with enriched trial files
 OUTPUT_FILE = 'stag_hunt_with_regressors.mp4'
 
 FPS = 15

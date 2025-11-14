@@ -20,7 +20,7 @@ from models.belief_model_distance import BayesianIntentionModel
 @pytest.fixture
 def trial6_data():
     """Load Trial 6 data - the trial we debugged extensively."""
-    trial_data = pd.read_csv('inputs/stag_hunt_coop_trial6_2024_08_24_0848.csv')
+    trial_data = pd.read_csv('data/stag_hunt_coop_trial6_2024_08_24_0848.csv')
 
     # Fix column typo if present
     if 'plater1_y' in trial_data.columns:
