@@ -11,7 +11,7 @@ import pytest
 import pandas as pd
 import glob
 from pathlib import Path
-from belief_model_distance import BayesianIntentionModel
+from models.belief_model_distance import BayesianIntentionModel
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ Test Classes:
 
 import pytest
 import numpy as np
-from decision_model_basic import UtilityDecisionModel
+from models.decision_model_basic import UtilityDecisionModel
 
 
 class TestBasicFunctionality:
