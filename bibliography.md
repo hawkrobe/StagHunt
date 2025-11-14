@@ -30,18 +30,6 @@
 
 **Relevance:** Provides the theoretical foundation for understanding tension between risk and reward in coordination games. Essential for interpreting behavioral data in stag hunt paradigms.
 
-**Structure:** Part I: Location (spatial structure), Part II: Signals (communication), Part III: Association (network formation)
-
----
-
-### Rousseau, J.-J. (1755/1984). *A Discourse on Inequality*.
-
-**Original Quote:** "If it was a matter of hunting a deer, everyone well realized that he must remain faithful to his post; but if a hare happened to pass within reach of one of them, we cannot doubt that he would have gone off in pursuit of it without scruple."
-
-**Historical Significance:** The foundational story from which the stag hunt game derives. Rousseau uses this parable to illustrate the fundamental tension in forming social contracts—the conflict between individual self-interest (guaranteed smaller reward) and collective benefit (larger reward requiring mutual trust).
-
-**Key Insight:** Highlights that cooperation requires commitment even when safer alternatives are available, presaging modern game-theoretic analyses of assurance games.
-
 ---
 
 ### Crawford, V. P., & Haller, H. (1990). Learning how to cooperate: Optimal play in repeated coordination games. *Econometrica*, 58(3), 571-595.
@@ -76,20 +64,11 @@
 
 **Methodological Innovation:** Uses joint density heat maps to visualize strategy profiles over time, showing clustering patterns around equilibria.
 
-**Relevance:** Directly comparable to the current study's paradigm—demonstrates that continuous-time interaction fundamentally changes coordination dynamics compared to simultaneous move games.
-
 ---
 
 ### Frey, S., & Goldstone, R. L. (2010). Group Stratification and Coordination Failure in a Continuous N-Player Stag Hunt. Proceedings of the Cognitive Science Society.
 
 **Key Contribution:** Extends stag hunt to N-player continuous-time setting, showing how group size affects coordination failure.
-
-**Key Findings:**
-- Larger groups show increased coordination failure
-- Group stratification emerges with some players coordinating while others defect
-- Continuous action space reveals dynamics invisible in discrete games
-
-**Relevance:** Shows scalability challenges of stag hunt coordination and how continuous action spaces affect emergent patterns.
 
 ---
 
@@ -109,8 +88,6 @@
 - Risk dominance alone does not fully predict behavior
 - Learning dynamics show path dependence—early successes breed later coordination
 - Subjects display "conditional expectations" linking strategy choice to perceived optimization incentives
-
-**Theoretical Implication:** Challenges pure risk-dominance prediction; suggests optimization incentives matter beyond strategic uncertainty.
 
 **Relevance:** Demonstrates that payoff structure details matter for equilibrium selection in repeated play.
 
@@ -146,8 +123,6 @@
 - One-way communication is less effective than two-way communication
 - Communication acts as a coordination device by making intentions public
 
-**Relevance:** Establishes communication as critical mechanism for overcoming strategic uncertainty in coordination games.
-
 ---
 
 ### Hallers-Haalboom, E. T., De Jaegher, K. J. M., Sterck, E. H. M., Brosnan, S. F., & Vermande, M. M. (2025). Communication increases cooperation among students in a coordination game. *Proceedings of the National Academy of Sciences*, 122(35), e2517669122.
@@ -165,8 +140,6 @@
 - No significant sex differences in coordination success
 
 **Novel Contribution:** Shows communication facilitates both *information discovery* and *coordination*, not just the latter.
-
-**Relevance:** Highlights role of communication in environments with incomplete information—directly relevant for tasks where optimal strategies must be learned.
 
 ---
 
@@ -196,8 +169,6 @@
 
 **Key Insight:** Strategic uncertainty in large groups creates strong pressure toward risk-dominant (safe) choices even when efficiency losses are substantial.
 
-**Relevance:** Shows scale-dependence of coordination—larger groups face greater coordination challenges.
-
 ---
 
 ## Continuous Spatial Coordination Paradigms
@@ -216,10 +187,6 @@
 - High stakes amplify effect of real-time interaction on convention stability
 - Low stakes allow satisfactory "on-the-fly" coordination without stable conventions
 - High stakes create pressure to establish persistent cross-round expectations
-
-**Theoretical Contribution:** Introduces concept of "social canalization"—interaction between within-trial dynamics and across-trial learning.
-
-**Key Insight:** Continuous time allows players to signal intentions and respond dynamically within each interaction, fundamentally changing coordination process.
 
 **Methodological Innovation:** Fine-grained analysis of movement trajectories reveals continuous negotiation processes invisible in discrete-choice paradigms. Provides precedent for studying coordination in continuous spatial environments. Stag hunt task extends this to spatial navigation with multiple prey options.
 
@@ -246,11 +213,6 @@
 - Tracks full continuous trajectories of both players and sheep
 - Uses relative phase analysis to quantify interpersonal coordination
 - Computational modeling (HKB model) captures coordination dynamics
-
-**Relevance:** 
-- Demonstrates spontaneous emergence of coordination strategies in continuous spatial tasks
-- Shows that effective strategies may not be initially apparent—requiring discovery through interaction
-- Provides precedent for analyzing continuous movement coordination with dynamical systems tools
 
 **Comparison to Stag Hunt Task:** Similar continuous spatial navigation, but without explicit payoff structure (stag/hare tradeoff) and strategic prey selection.
 
@@ -456,20 +418,6 @@
 **Main Finding:** Both partners continuously adapt to each other simultaneously, with more skilled partner adapting more.
 
 **Relevance:** Shows bidirectional real-time adaptation in joint action—both players adjust to partner rather than one leading.
-
----
-
-## Additional Relevant Topics
-
-### Pursuit-Evasion in Robotics/AI
-
-While most robotics work focuses on autonomous agents rather than human behavior, some relevant computational frameworks include:
-
-- **Differential games approach:** Treats pursuit-evasion as optimal control problem
-- **Multi-agent reinforcement learning:** Recent approaches showing emergent coordinated pursuit
-- **Game-theoretic modeling:** Nash equilibria in pursuit-evasion scenarios
-
-**Note:** Most robotics literature is tangential to behavioral questions, but computational models may be useful for modeling partner behavior or creating autonomous agents for experiments.
 
 ---
 
