@@ -348,14 +348,14 @@ def generate_neural_regressors(learning_rate: float = 0.3):
 
     # Also save individual trial files with regressors
     import os
-    os.makedirs('enriched_trials', exist_ok=True)
+    os.makedirs('data/enriched_trials', exist_ok=True)
 
     for trial_data in enriched_trials:
         trial_num = trial_data['trial_num'].iloc[0]
-        trial_output = f'enriched_trials/trial_{trial_num:02d}_with_regressors.csv'
+        trial_output = f'data/enriched_trials/trial_{trial_num:02d}_with_regressors.csv'
         trial_data.to_csv(trial_output, index=False)
 
-    print(f"✓ Saved individual trial files to enriched_trials/")
+    print(f"✓ Saved individual trial files to data/enriched_trials/")
 
     return all_data, regressor_cols
 

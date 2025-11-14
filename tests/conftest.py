@@ -17,9 +17,9 @@ from models.belief_model_distance import BayesianIntentionModel
 @pytest.fixture
 def trial_files():
     """Get list of all trial CSV files."""
-    files = sorted(glob.glob('inputs/stag_hunt_coop_trial*.csv'))
+    files = sorted(glob.glob('data/stag_hunt_coop_trial*.csv'))
     if not files:
-        pytest.skip("No trial files found in inputs/ directory")
+        pytest.skip("No trial files found in data/ directory")
     return files
 
 

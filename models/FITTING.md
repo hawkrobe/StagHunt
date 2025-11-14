@@ -6,16 +6,16 @@ Unified command-line interface for fitting all Stag Hunt computational models.
 
 ```bash
 # List available models
-python fitting/fit_model.py --list
+python models/fit.py --list
 
 # Fit a model
-python fitting/fit_model.py --model integrated
+python models/fit.py --model integrated
 
 # Save results
-python fitting/fit_model.py --model hierarchical --output results.json
+python models/fit.py --model hierarchical --output results.json
 
 # Use different optimization method
-python fitting/fit_model.py --model distance --method nelder-mead
+python models/fit.py --model distance --method nelder-mead
 ```
 
 ## Available Models
@@ -32,7 +32,7 @@ python fitting/fit_model.py --model distance --method nelder-mead
 ### Basic Fitting
 
 ```bash
-python fitting/fit_model.py --model MODEL_NAME
+python models/fit.py --model MODEL_NAME
 ```
 
 This will:
@@ -63,7 +63,7 @@ This will:
 
 ### Fit integrated model
 ```bash
-python fitting/fit_model.py --model integrated
+python models/fit.py --model integrated
 ```
 
 Output:
@@ -105,7 +105,7 @@ Model fit:
 
 ### Save results to file
 ```bash
-python fitting/fit_model.py --model distance --output distance_fit.json
+python models/fit.py --model distance --output distance_fit.json
 ```
 
 Creates `distance_fit.json`:
@@ -126,7 +126,7 @@ Creates `distance_fit.json`:
 
 ### Try different optimization method
 ```bash
-python fitting/fit_model.py --model hierarchical --method nelder-mead
+python models/fit.py --model hierarchical --method nelder-mead
 ```
 
 ## Model Details
@@ -149,7 +149,7 @@ Combines:
 
 **Usage:**
 ```bash
-python fitting/fit_model.py --model integrated
+python models/fit.py --model integrated
 ```
 
 ### hierarchical
@@ -165,7 +165,7 @@ Two-level decision model without cross-trial learning. Requires precomputed beli
 
 **Usage:**
 ```bash
-python fitting/fit_model.py --model hierarchical
+python models/fit.py --model hierarchical
 ```
 
 ### distance
@@ -180,7 +180,7 @@ Simple baseline: move toward nearest target.
 
 **Usage:**
 ```bash
-python fitting/fit_model.py --model distance
+python models/fit.py --model distance
 ```
 
 ### distance_tiebreak
@@ -196,7 +196,7 @@ Distance model with explicit tie-breaking when targets are equidistant.
 
 **Usage:**
 ```bash
-python fitting/fit_model.py --model distance_tiebreak
+python models/fit.py --model distance_tiebreak
 ```
 
 ## Output Format
@@ -232,9 +232,9 @@ To compare models, fit each one and compare AIC/BIC:
 
 ```bash
 # Fit each model
-python fitting/fit_model.py --model distance --output distance.json
-python fitting/fit_model.py --model hierarchical --output hierarchical.json
-python fitting/fit_model.py --model integrated --output integrated.json
+python models/fit.py --model distance --output distance.json
+python models/fit.py --model hierarchical --output hierarchical.json
+python models/fit.py --model integrated --output integrated.json
 
 # Compare AICs (lower is better)
 ```
@@ -246,7 +246,7 @@ python fitting/fit_model.py --model integrated --output integrated.json
 
 ## Adding New Models
 
-To add a new model, edit `fit_model.py`:
+To add a new model, edit `models/fit.py`:
 
 1. Add model configuration to `MODELS` dict:
 ```python
@@ -272,7 +272,7 @@ elif model_name == 'my_model':
 
 3. Test:
 ```bash
-python fitting/fit_model.py --model my_model
+python models/fit.py --model my_model
 ```
 
 ## Troubleshooting
@@ -282,14 +282,14 @@ python fitting/fit_model.py --model my_model
 Ensure you're running from the repository root:
 ```bash
 cd /path/to/StagHunt
-python fitting/fit_model.py --model integrated
+python models/fit.py --model integrated
 ```
 
 ### Optimization fails
 
 Try a different method:
 ```bash
-python fitting/fit_model.py --model MODEL --method nelder-mead
+python models/fit.py --model MODEL --method nelder-mead
 ```
 
 ### Very slow

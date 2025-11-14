@@ -313,6 +313,54 @@ def fit_model(model_name, method='L-BFGS-B', verbose=True):
     return results
 
 
+def save_as_defaults(results, verbose=True):
+    """
+    Save fitted parameters as defaults in fitted_params.json.
+
+    Parameters:
+    -----------
+    results : dict
+        Results dictionary from fit_model()
+    verbose : bool
+        Print confirmation message
+    """
+    import json
+    from datetime import datetime
+
+    config_path = 'fitted_params.json'
+
+    # Load current config (or create empty if doesn't exist)
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        config = {}
+
+    model_name = results['model']
+
+    # Prepare updated entry
+    model_config = results['parameters'].copy()
+    model_config['description'] = MODELS[model_name]['description']
+    model_config['fit_info'] = {
+        'method': 'optimize',
+        'date': datetime.now().strftime('%Y-%m-%d'),
+        'log_likelihood': results['log_likelihood'],
+        'aic': results['aic'],
+        'bic': results['bic']
+    }
+
+    # Update config
+    config[model_name] = model_config
+
+    # Save
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+
+    if verbose:
+        print(f"\n✓ Saved fitted parameters to {config_path}")
+        print(f"  Model '{model_name}' defaults updated")
+
+
 # ==============================================================================
 # Main
 # ==============================================================================
@@ -344,6 +392,8 @@ Examples:
     parser.add_argument('--method', default='L-BFGS-B',
                        help='Optimization method (default: L-BFGS-B)')
     parser.add_argument('--output', help='Save results to JSON file')
+    parser.add_argument('--save-defaults', action='store_true',
+                       help='Save fitted parameters as defaults in fitted_params.json')
     parser.add_argument('--quiet', action='store_true',
                        help='Suppress output')
 
@@ -364,6 +414,10 @@ Examples:
 
     # Fit model
     results = fit_model(args.model, method=args.method, verbose=not args.quiet)
+
+    # Save as defaults
+    if args.save_defaults:
+        save_as_defaults(results, verbose=not args.quiet)
 
     # Save results
     if args.output:
