@@ -1,12 +1,16 @@
 """
 Unified Models for Stag Hunt Cooperation Task
 
-This module provides clean entrypoints for all model variants.
+This module provides clean entrypoints for all model variants and data loading.
 
 Quick Start:
 ------------
 ```python
-from models import DecisionModel, BeliefModel
+from stag_hunt import DecisionModel, BeliefModel, load_trial, load_all_trials
+
+# Load data
+trial = load_trial('data/sub-120/.../trial.tsv')
+trials = load_all_trials(subject='120', opponent='ieeg')
 
 # Recommended: Coordinated decision model
 decision_model = DecisionModel(
@@ -21,7 +25,7 @@ belief_model = BeliefModel(
 )
 
 # Run belief updating on trial
-trial_with_beliefs = belief_model.run_trial(trial_data)
+trial_with_beliefs = belief_model.run_trial(trial)
 ```
 
 Model Types:
@@ -33,6 +37,15 @@ DecisionModel:
 BeliefModel:
   - 'decision': Inverse inference through decision model (recommended)
   - 'distance': Distance-based heuristics (faster, less principled)
+
+Data Loading:
+-------------
+- load_trial(filepath): Load a single trial file
+- load_all_trials(...): Load multiple trials with optional filters
+- find_trial_files(...): Find trial files matching criteria
+- get_trial_info(filepath): Extract metadata from filename
+- get_outcome(trial_data): Determine cooperation/defection outcome
+- summarize_data(): Generate summary statistics
 """
 
 import numpy as np
@@ -43,6 +56,20 @@ from models.decision_model_basic import UtilityDecisionModel
 from models.decision_model_coordinated import CoordinatedDecisionModel
 from models.belief_model_distance import BayesianIntentionModel
 from models.belief_model_decision import BayesianIntentionModelWithDecision
+
+# Import data loading utilities
+from data_loader import (
+    load_trial,
+    load_all_trials,
+    find_trial_files,
+    get_trial_info,
+    get_outcome,
+    summarize_data,
+    save_derivative,
+    save_all_derivatives,
+    RAW_DATA_DIR,
+    DERIVATIVES_DIR
+)
 
 
 def load_fitted_params(config_path='fitted_params.json'):

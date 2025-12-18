@@ -1,6 +1,13 @@
 # Ignore outputs directory (contains large video files)
 outputs/
 
+# Data directories (patient data - do not commit)
+data/raw/
+data/derivatives/
+
+# Generated visualization outputs
+visualization/output/
+
 # Video files
 *.mp4
 

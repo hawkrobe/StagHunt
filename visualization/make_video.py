@@ -5,6 +5,23 @@ across all trials of the Stag Hunt task.
 
 This enhanced version overlays each player's belief about their partner's intentions
 (stag vs. rabbit) on top of the movement trajectories.
+
+Usage:
+------
+# Use default settings (all main task trials)
+python visualization/make_video.py
+
+# Filter by subject
+python visualization/make_video.py --subject 120
+
+# Filter by opponent type
+python visualization/make_video.py --opponent ieeg
+
+# Filter by reward condition
+python visualization/make_video.py --reward stagdecrease
+
+# Combine filters
+python visualization/make_video.py --subject 258 --opponent same
 """
 
 import pandas as pd
@@ -15,19 +32,24 @@ from matplotlib.animation import FuncAnimation, FFMpegWriter
 from matplotlib.patches import Rectangle
 from pathlib import Path
 import sys
+import argparse
 
-# Import unified model API
-from stag_hunt import BeliefModel
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Import unified model API and data loader
+from stag_hunt import BeliefModel, load_trial, find_trial_files, get_trial_info, get_outcome, RAW_DATA_DIR
 
 # ============================================================================
 # CONFIGURATION - MODIFY THESE PATHS FOR YOUR LOCAL SETUP
 # ============================================================================
-DATA_DIR = Path('inputs')  # Directory containing trial CSV files
+DATA_DIR = Path(RAW_DATA_DIR)  # Directory containing trial data
 OUTPUT_FILE = 'stag_hunt_trajectories_with_beliefs.mp4'
 
 # Animation settings
 FPS = 15  # Reduced from 30 for faster generation
 TRANSITION_DURATION = 1.0  # seconds between trials
+MAX_TRIALS = 24  # Maximum trials to include in video (for reasonable file size)
 
 # Bayesian model parameters (using decision-based inverse planning)
 PRIOR_STAG = 0.5  # Initial belief that partner is going for stag
@@ -40,6 +62,26 @@ DECISION_MODEL_PARAMS = {
     'action_noise': 5.0,         # FIXED: 5.0 (was 10.0, too noisy)
     'n_directions': 8            # Discrete action space
 }
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Create Stag Hunt visualization video')
+parser.add_argument('--subject', type=str, help='Filter by subject ID (e.g., 120, 255)')
+parser.add_argument('--opponent', type=str, choices=['computer', 'same', 'diff', 'ieeg'],
+                    help='Filter by opponent type')
+parser.add_argument('--reward', type=str, choices=['rabbitincrease', 'stagdecrease'],
+                    help='Filter by reward condition')
+parser.add_argument('--max-trials', type=int, default=MAX_TRIALS,
+                    help=f'Maximum number of trials (default: {MAX_TRIALS})')
+parser.add_argument('--output', type=str, default=OUTPUT_FILE,
+                    help=f'Output filename (default: {OUTPUT_FILE})')
+parser.add_argument('--fps', type=int, default=FPS,
+                    help=f'Frames per second (default: {FPS})')
+args = parser.parse_args()
+
+# Update settings from args
+MAX_TRIALS = args.max_trials
+OUTPUT_FILE = args.output
+FPS = args.fps
 
 # Colors (professional academic palette)
 PLAYER1_COLOR = '#E63946'  # Red (Chinese player)
@@ -61,27 +103,43 @@ print("=" * 70)
 print("LOADING STAG HUNT DATA AND RUNNING BAYESIAN MODEL")
 print("=" * 70)
 
-trial_files = sorted(DATA_DIR.glob('stag_hunt_coop_trial*.csv'))
+# Find trial files using the unified data loader
+trial_files = find_trial_files(
+    str(DATA_DIR),
+    subject=args.subject,
+    opponent=args.opponent,
+    reward=args.reward,
+    task_type='main'
+)
+
+# Fall back to legacy format if no new format files found
+if not trial_files:
+    trial_files = find_trial_files(str(DATA_DIR), task_type='legacy')
 
 if not trial_files:
     print(f"❌ ERROR: No trial files found in {DATA_DIR.absolute()}")
-    print("Looking for files matching: 'stag_hunt_coop_trial*.csv'")
+    print(f"  Subject filter: {args.subject}")
+    print(f"  Opponent filter: {args.opponent}")
+    print(f"  Reward filter: {args.reward}")
     exit(1)
 
-print(f"✓ Found {len(trial_files)} trial files\n")
+# Limit number of trials
+if len(trial_files) > MAX_TRIALS:
+    print(f"✓ Found {len(trial_files)} trial files, limiting to {MAX_TRIALS}")
+    trial_files = trial_files[:MAX_TRIALS]
+else:
+    print(f"✓ Found {len(trial_files)} trial files\n")
 
-# Outcome mapping
-outcome_labels = {
-    0: 'Ongoing',
-    1: 'P1 touched stag alone',
-    2: 'P2 touched stag alone', 
-    3: 'P1 caught rabbit',
-    4: 'P2 caught rabbit',
-    5: 'Both caught stag (COOPERATION!)'
-}
+# Show filters
+if args.subject:
+    print(f"  Subject filter: {args.subject}")
+if args.opponent:
+    print(f"  Opponent filter: {args.opponent}")
+if args.reward:
+    print(f"  Reward filter: {args.reward}")
 
 # Initialize Bayesian model WITH DECISION-BASED INVERSE PLANNING (using unified API)
-print(f"Initializing Bayesian model with decision-based inverse planning:")
+print(f"\nInitializing Bayesian model with decision-based inverse planning:")
 print(f"  Prior belief (stag): {PRIOR_STAG}")
 print(f"  Belief bounds: {BELIEF_BOUNDS}")
 print(f"  Decision model parameters:")
@@ -98,72 +156,64 @@ model = BeliefModel(
 # Load all trials and run model
 trials_data = []
 trial_outcomes = {}
+trial_metadata = {}
 trial_beliefs = {}  # Store belief trajectories
 
-for trial_file in trial_files:
-    trial_num = int(trial_file.stem.split('trial')[1].split('_')[0])
-    
+for idx, trial_file in enumerate(trial_files):
+    trial_num = idx + 1  # Use index as trial number for display
+    info = get_trial_info(trial_file)
+
     try:
-        df = pd.read_csv(trial_file)
-        
-        # Fix typo in column name if present
-        if 'plater1_y' in df.columns:
-            df = df.rename(columns={'plater1_y': 'player1_y'})
-        
-        # Drop rows with NaN values
-        original_len = len(df)
-        df = df.dropna()
-        if len(df) < original_len:
-            print(f"  Trial {trial_num:2d}: Dropped {original_len - len(df)} NaN row(s)")
-        
+        # Use unified data loader
+        df = load_trial(trial_file)
+
         if len(df) == 0:
-            print(f"❌ ERROR: Trial {trial_num} has no valid data after dropping NaN")
+            print(f"❌ ERROR: Trial {trial_num} has no valid data")
             continue
-        
+
         # Sort by time_point to ensure chronological order
         if not df['time_point'].is_monotonic_increasing:
             print(f"  Trial {trial_num:2d}: Sorting data by time (was out of order)")
             df = df.sort_values('time_point').reset_index(drop=True)
-        
-        # Validate required columns
-        required_cols = ['player1_x', 'player1_y', 'player2_x', 'player2_y',
-                        'stag_x', 'stag_y', 'rabbit_x', 'rabbit_y', 'value', 'event', 'time_point']
-        
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            print(f"❌ ERROR in {trial_file.name}: Missing columns: {missing_cols}")
-            continue
-        
+
+        # Add value column if missing (for legacy compatibility)
+        if 'value' not in df.columns:
+            df['value'] = 1.0
+
         # RUN BAYESIAN MODEL ON THIS TRIAL
         df_with_beliefs = model.run_trial(df)
-        
+
         # Add trial number
         df_with_beliefs['trial'] = trial_num
-        
-        # Determine outcome
-        final_event = df_with_beliefs[df_with_beliefs['event'] > 0]['event'].iloc[-1] if (df_with_beliefs['event'] > 0).any() else 0
-        trial_outcomes[trial_num] = final_event
-        
+
+        # Determine outcome using unified outcome detector
+        outcome_info = get_outcome(df_with_beliefs)
+        trial_outcomes[trial_num] = outcome_info['outcome']
+        trial_metadata[trial_num] = info
+
         # Store belief data
         trial_beliefs[trial_num] = {
             'p1_belief_p2_stag': df_with_beliefs['p1_belief_p2_stag'].values,
             'p2_belief_p1_stag': df_with_beliefs['p2_belief_p1_stag'].values
         }
-        
+
         trials_data.append(df_with_beliefs)
-        
+
         duration = df_with_beliefs['time_point'].iloc[-1] - df_with_beliefs['time_point'].iloc[0]
-        outcome_str = outcome_labels[final_event]
-        coop_marker = " ✓" if final_event == 5 else ""
-        
-        # Show belief summary
+        outcome_str = outcome_info['outcome'].replace('_', ' ')
+        coop_marker = " ✓" if outcome_info['outcome'] == 'cooperation' else ""
+
+        # Show trial info
+        sub_str = f"sub-{info['subject']}" if info['subject'] else "legacy"
+        opp_str = info['opponent'] if info['opponent'] else "?"
+
         p1_final = df_with_beliefs['p1_belief_p2_stag'].iloc[-1]
         p2_final = df_with_beliefs['p2_belief_p1_stag'].iloc[-1]
-        print(f"  Trial {trial_num:2d}: {len(df_with_beliefs):4d} rows, {duration:5.2f}s, {outcome_str}{coop_marker}")
+        print(f"  Trial {trial_num:2d} ({sub_str}, {opp_str}): {len(df_with_beliefs):4d} rows, {duration:5.2f}s, {outcome_str}{coop_marker}")
         print(f"             Beliefs: P1→P2={p1_final:.2f}, P2→P1={p2_final:.2f}")
-        
+
     except Exception as e:
-        print(f"❌ ERROR loading {trial_file.name}: {e}")
+        print(f"❌ ERROR loading trial {trial_num}: {e}")
         import traceback
         traceback.print_exc()
         continue
@@ -177,7 +227,7 @@ all_data = pd.concat(trials_data, ignore_index=True)
 print(f"\n✓ Successfully loaded {len(trials_data)} trials")
 print(f"✓ Total data points: {len(all_data)}")
 
-coop_count = sum(1 for v in trial_outcomes.values() if v == 5)
+coop_count = sum(1 for v in trial_outcomes.values() if v == 'cooperation')
 print(f"✓ Cooperation: {coop_count}/{len(trials_data)} trials ({100*coop_count/len(trials_data):.1f}%)")
 
 # ============================================================================
@@ -430,16 +480,16 @@ def animate(frame):
     trial_text.set_text(f'Trial {trial_num} of {len(trial_animations)}')
     
     outcome = trial_outcomes[trial_num]
-    outcome_str = outcome_labels[outcome]
-    if outcome == 5:
+    outcome_str = outcome.replace('_', ' ').title()
+    if outcome == 'cooperation':
         outcome_text.set_text(f'Outcome: {outcome_str}')
         outcome_text.set_bbox(dict(boxstyle='round', facecolor='lightgreen', alpha=0.9))
-    elif outcome in [3, 4]:
+    elif outcome == 'mutual_defection':
         outcome_text.set_text(f'Outcome: {outcome_str}')
         outcome_text.set_bbox(dict(boxstyle='round', facecolor='lightcoral', alpha=0.9))
     else:
         outcome_text.set_text(f'Outcome: {outcome_str}')
-        outcome_text.set_bbox(dict(boxstyle='round', facecolor='white', alpha=0.9))
+        outcome_text.set_bbox(dict(boxstyle='round', facecolor='lightyellow', alpha=0.9))
     
     current_value = trial_data['value'].iloc[trial_frame_idx]
     value_text.set_text(f'Dynamic value: {current_value:.1f}')
@@ -470,7 +520,16 @@ print("✓ VIDEO WITH BELIEF TRACKING SAVED SUCCESSFULLY!")
 print(f"{'='*70}")
 print(f"File: {OUTPUT_FILE}")
 print(f"Duration: {total_frames/FPS:.1f} seconds")
-print(f"Cooperation rate: {coop_count}/{len(trial_animations)} trials")
+print(f"Cooperation rate: {coop_count}/{len(trial_animations)} trials ({100*coop_count/len(trial_animations):.1f}%)")
+
+# Show breakdown by condition if available
+subjects = set(info['subject'] for info in trial_metadata.values() if info.get('subject'))
+opponents = set(info['opponent'] for info in trial_metadata.values() if info.get('opponent'))
+if subjects:
+    print(f"Subjects: {sorted(subjects)}")
+if opponents:
+    print(f"Opponents: {sorted(opponents)}")
+
 print(f"\nBayesian Model Parameters (Decision-Based Inverse Planning):")
 print(f"  Prior: {PRIOR_STAG}")
 print(f"  Bounds: {BELIEF_BOUNDS} (prevents ceiling/floor)")
