@@ -105,6 +105,37 @@ def single_obs_ll_coordination(obs_angle, px, py, partner_x, partner_y,
     return logsumexp(log_components)
 
 
+def single_obs_ll_imagined_we(obs_angle, px, py, partner_x, partner_y,
+                               stag_x, stag_y, rabbit_x, rabbit_y,
+                               joint_goal_belief, temperature, kappa):
+    """
+    Log-likelihood for single observation under Imagined We model (Tang et al.).
+
+    Key difference from Coordination model:
+    - Uses joint goal belief P(stag is OUR joint goal) instead of P(partner wants stag)
+    - The joint goal directly determines action selection (no timing modulation)
+
+    In the IW framework, agents imagine a "We" that has committed to a joint goal.
+    Given this joint goal, each agent moves toward that target.
+    """
+    # Angles to targets
+    angle_stag = jnp.arctan2(stag_y - py, stag_x - px)
+    angle_rabbit = jnp.arctan2(rabbit_y - py, rabbit_x - px)
+
+    # Under IW: action is determined by joint goal
+    # If joint goal = stag, go to stag; if joint goal = rabbit, go to rabbit
+    util_stag = jnp.cos(ACTION_ANGLES - angle_stag)
+    util_rabbit = jnp.cos(ACTION_ANGLES - angle_rabbit)
+    action_utils = joint_goal_belief * util_stag + (1 - joint_goal_belief) * util_rabbit
+
+    # Softmax action selection
+    action_probs = jax.nn.softmax(action_utils * temperature)
+
+    # Log-likelihood
+    log_components = vonmises.logpdf(obs_angle - ACTION_ANGLES, kappa) + jnp.log(action_probs)
+    return logsumexp(log_components)
+
+
 # =============================================================================
 # Vectorized versions using vmap
 # =============================================================================
@@ -118,6 +149,9 @@ _vmap_belief = jit(vmap(single_obs_ll_belief,
 
 _vmap_coordination = jit(vmap(single_obs_ll_coordination,
                               in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None, None)))
+
+_vmap_imagined_we = jit(vmap(single_obs_ll_imagined_we,
+                              in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None)))
 
 
 @jit
@@ -162,6 +196,24 @@ def coordination_model_ll(data, temperature=3.0, kappa=2.0, timing_tol=500.0):
     return jnp.sum(lls)
 
 
+def imagined_we_model_ll(data, temperature=3.0, kappa=2.0):
+    """
+    Imagined We model on batched data.
+
+    Uses joint goal belief P(stag is OUR joint goal) instead of
+    individual partner intention belief.
+    """
+    lls = _vmap_imagined_we(
+        data['obs'], data['px'], data['py'],
+        data['partner_x'], data['partner_y'],
+        data['stag_x'], data['stag_y'],
+        data['rabbit_x'], data['rabbit_y'],
+        data['iw_beliefs'],  # Joint goal beliefs from IW model
+        temperature, kappa
+    )
+    return jnp.sum(lls)
+
+
 # =============================================================================
 # Data extraction - batch ALL trials into single arrays
 # =============================================================================
@@ -174,6 +226,7 @@ def extract_all_data(trials: List[pd.DataFrame]) -> Dict[str, jnp.ndarray]:
     all_stag_x, all_stag_y = [], []
     all_rabbit_x, all_rabbit_y = [], []
     all_beliefs = []
+    all_iw_beliefs = []
 
     for trial in trials:
         for player in ['player1', 'player2']:
@@ -199,7 +252,7 @@ def extract_all_data(trials: List[pd.DataFrame]) -> Dict[str, jnp.ndarray]:
             all_rabbit_x.append(trial['rabbit_x'].values[idx + 1])
             all_rabbit_y.append(trial['rabbit_y'].values[idx + 1])
 
-            # Beliefs
+            # Standard beliefs (partner intention)
             p_num = player[-1]
             partner_num = '2' if p_num == '1' else '1'
             belief_col = f'p{p_num}_belief_p{partner_num}_stag'
@@ -207,6 +260,12 @@ def extract_all_data(trials: List[pd.DataFrame]) -> Dict[str, jnp.ndarray]:
                 all_beliefs.append(trial[belief_col].values[idx])
             else:
                 all_beliefs.append(np.full(len(idx), 0.5))
+
+            # IW beliefs (joint goal)
+            if 'joint_goal_stag' in trial.columns:
+                all_iw_beliefs.append(trial['joint_goal_stag'].values[idx])
+            else:
+                all_iw_beliefs.append(np.full(len(idx), 0.5))
 
     # Concatenate and convert to JAX arrays
     return {
@@ -220,13 +279,22 @@ def extract_all_data(trials: List[pd.DataFrame]) -> Dict[str, jnp.ndarray]:
         'rabbit_x': jnp.array(np.concatenate(all_rabbit_x)),
         'rabbit_y': jnp.array(np.concatenate(all_rabbit_y)),
         'beliefs': jnp.array(np.concatenate(all_beliefs)),
+        'iw_beliefs': jnp.array(np.concatenate(all_iw_beliefs)),
     }
 
 
 def add_beliefs_to_trials(trials: List[pd.DataFrame], prior=0.5, concentration=1.5) -> List[pd.DataFrame]:
-    """Add belief columns to trials using fast JAX version."""
+    """Add belief columns to trials using fast JAX version (both standard and IW)."""
     from belief_model_jax import add_beliefs_batch_fast
-    return add_beliefs_batch_fast(trials, prior=prior, concentration=concentration)
+    from belief_model_iw import add_iw_beliefs_batch
+
+    # Add standard beliefs (partner intention)
+    trials = add_beliefs_batch_fast(trials, prior=prior, concentration=concentration)
+
+    # Add IW beliefs (joint goal)
+    trials = add_iw_beliefs_batch(trials, prior=prior, concentration=concentration)
+
+    return trials
 
 
 def load_trials(subjects: Optional[List[str]] = None) -> List[pd.DataFrame]:
@@ -322,6 +390,23 @@ def fit_model(model_name: str, data: Dict[str, jnp.ndarray]) -> Dict:
             'n_params': 3
         }
 
+    elif model_name == 'ImagineWe':
+        def neg_ll(params):
+            temp = jax.nn.softplus(params[0])
+            kappa = jax.nn.softplus(params[1])
+            return -imagined_we_model_ll(data, temperature=temp, kappa=kappa)
+
+        x0 = jnp.array([jnp.log(jnp.exp(3.0) - 1), jnp.log(jnp.exp(2.0) - 1)])
+        result = jax_minimize(neg_ll, x0=x0, method='BFGS')
+
+        temp = float(jax.nn.softplus(result.x[0]))
+        kappa = float(jax.nn.softplus(result.x[1]))
+        return {
+            'params': {'temperature': temp, 'kappa': kappa},
+            'll': -float(result.fun),
+            'n_params': 2
+        }
+
     raise ValueError(f"Unknown model: {model_name}")
 
 
@@ -329,7 +414,7 @@ def fit_model(model_name: str, data: Dict[str, jnp.ndarray]) -> Dict:
 # Model comparison
 # =============================================================================
 
-MODELS = ['Null', 'Distance', 'Belief', 'Coordination']
+MODELS = ['Null', 'Distance', 'Belief', 'Coordination', 'ImagineWe']
 
 
 def main():
@@ -372,6 +457,7 @@ def main():
     _ = distance_model_ll(data)
     _ = belief_model_ll(data)
     _ = coordination_model_ll(data)
+    _ = imagined_we_model_ll(data)
     print(f"done ({time.time() - t0:.1f}s)")
 
     # Fit or evaluate models
@@ -418,6 +504,9 @@ def main():
             elif name == 'Coordination':
                 ll = float(coordination_model_ll(data))
                 k = 3
+            elif name == 'ImagineWe':
+                ll = float(imagined_we_model_ll(data))
+                k = 2
 
             elapsed = time.time() - t0
             aic = 2 * k - 2 * ll
