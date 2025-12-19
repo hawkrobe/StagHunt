@@ -522,7 +522,7 @@ def save_derivative(
 
 
 def save_all_derivatives(
-    belief_model,
+    belief_func=None,
     data_dir: str = None,
     output_dir: str = None,
     subject: Optional[str] = None,
@@ -534,8 +534,8 @@ def save_all_derivatives(
 
     Parameters:
     -----------
-    belief_model : BeliefModel
-        Initialized belief model to run on trials
+    belief_func : callable, optional
+        Batch belief function (e.g., add_iw_beliefs_batch). If None, uses IW model.
     data_dir : str
         Input directory (default: data/raw)
     output_dir : str
@@ -556,37 +556,49 @@ def save_all_derivatives(
     if output_dir is None:
         output_dir = DERIVATIVES_DIR
 
-    # Find and process trials
+    # Default to IW model
+    if belief_func is None:
+        from models.belief_model_iw import add_iw_beliefs_batch
+        belief_func = add_iw_beliefs_batch
+
+    # Find and load all trials
     files = find_trial_files(data_dir, subject=subject, opponent=opponent, task_type='main')
 
     if verbose:
-        print(f"Processing {len(files)} trials...")
+        print(f"Loading {len(files)} trials...")
 
-    saved_paths = []
-    for i, filepath in enumerate(files):
+    trials = []
+    infos = []
+    for filepath in files:
         try:
-            # Load raw trial
-            trial = load_trial(filepath)
-            info = get_trial_info(filepath)
-
-            # Run belief model
-            trial_with_beliefs = belief_model.run_trial(trial)
-
-            # Add outcome info
-            outcome = get_outcome(trial_with_beliefs)
-            trial_with_beliefs['outcome'] = outcome['outcome']
-
-            # Save derivative
-            out_path = save_derivative(trial_with_beliefs, info, output_dir)
-            saved_paths.append(out_path)
-
-            if verbose and (i + 1) % 50 == 0:
-                print(f"  Processed {i + 1}/{len(files)} trials...")
-
+            trials.append(load_trial(filepath))
+            infos.append(get_trial_info(filepath))
         except Exception as e:
             if verbose:
-                print(f"  Error processing {filepath}: {e}")
-            continue
+                print(f"  Error loading {filepath}: {e}")
+
+    if verbose:
+        print(f"Computing beliefs (batched)...")
+
+    # Run belief model on all trials at once
+    trials_with_beliefs = belief_func(trials)
+
+    if verbose:
+        print(f"Saving derivatives...")
+
+    saved_paths = []
+    for i, (trial, info) in enumerate(zip(trials_with_beliefs, infos)):
+        try:
+            # Add outcome info
+            outcome = get_outcome(trial)
+            trial['outcome'] = outcome['outcome']
+
+            # Save derivative
+            out_path = save_derivative(trial, info, output_dir)
+            saved_paths.append(out_path)
+        except Exception as e:
+            if verbose:
+                print(f"  Error saving: {e}")
 
     if verbose:
         print(f"Saved {len(saved_paths)} derivatives to {output_dir}")

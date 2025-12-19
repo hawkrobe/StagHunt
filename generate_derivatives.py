@@ -59,9 +59,9 @@ Examples:
 
     parser.add_argument(
         '--model', '-m',
-        choices=['distance', 'planning'],
-        default='distance',
-        help='Belief model type (default: distance)'
+        choices=['standard', 'iw'],
+        default='iw',
+        help='Belief model type: standard (per-player) or iw (joint goal, default)'
     )
     parser.add_argument(
         '--subject', '-s',
@@ -91,25 +91,14 @@ Examples:
     args = parser.parse_args()
 
     # Initialize belief model
-    if args.model == 'distance':
-        from models.belief_model_distance import BayesianIntentionModel
-        belief_model = BayesianIntentionModel(
-            prior_stag=0.5,
-            concentration=1.5,
-            belief_bounds=(0.01, 0.99)
-        )
-        model_desc = "distance-based"
+    if args.model == 'iw':
+        from models.belief_model_iw import add_iw_beliefs_batch
+        belief_func = add_iw_beliefs_batch
+        model_desc = "Imagined We (joint goal)"
     else:
-        # Planning model requires fitted parameters
-        try:
-            from stag_hunt import BeliefModel
-            belief_model = BeliefModel(inference_type='planning')
-            model_desc = "planning-based"
-        except ValueError as e:
-            print(f"Error: {e}")
-            print("\nPlanning model requires fitted parameters.")
-            print("Either fit the model first, or use --model distance")
-            sys.exit(1)
+        from models.belief_model_jax import add_beliefs_batch_fast
+        belief_func = add_beliefs_batch_fast
+        model_desc = "Standard (per-player intentions)"
 
     if not args.quiet:
         print("=" * 60)
@@ -126,7 +115,7 @@ Examples:
 
     # Generate derivatives
     saved_paths = save_all_derivatives(
-        belief_model=belief_model,
+        belief_func=belief_func,
         data_dir=args.input,
         output_dir=args.output,
         subject=args.subject,

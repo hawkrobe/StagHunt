@@ -35,7 +35,7 @@ from collections import defaultdict
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from stag_hunt import load_trial, find_trial_files, get_trial_info, get_outcome, RAW_DATA_DIR
-from models.belief_model_distance import BayesianIntentionModel
+from models.belief_model_iw import add_iw_beliefs_batch
 
 # Colors
 PLAYER1_COLOR = '#E63946'
@@ -434,9 +434,6 @@ def make_summary_figure(trials, output_file='summary_statistics.png'):
 def make_belief_overview(trials, output_file='belief_dynamics.png', n_samples=50):
     """Create overview of belief dynamics across conditions."""
 
-    # Initialize belief model
-    model = BayesianIntentionModel(prior_stag=0.5, concentration=1.5, belief_bounds=(0.01, 0.99))
-
     fig, axes = plt.subplots(2, 4, figsize=(18, 8))
 
     opponents = ['computer', 'same', 'diff', 'ieeg']
@@ -450,46 +447,41 @@ def make_belief_overview(trials, output_file='belief_dynamics.png', n_samples=50
         # Sample trials
         sample_trials = opp_trials[:n_samples]
 
-        # Run belief model on samples
-        coop_beliefs_p1 = []
-        coop_beliefs_p2 = []
-        defect_beliefs_p1 = []
-        defect_beliefs_p2 = []
+        # Run belief model on all samples at once (batched)
+        trial_dfs = [t['data'] for t in sample_trials]
+        trials_with_beliefs = add_iw_beliefs_batch(trial_dfs)
 
-        for t in sample_trials:
-            df_with_beliefs = model.run_trial(t['data'])
+        coop_beliefs = []
+        defect_beliefs = []
 
+        for t, df_with_beliefs in zip(sample_trials, trials_with_beliefs):
             # Normalize time to 0-1
             n_steps = len(df_with_beliefs)
             time_norm = np.linspace(0, 1, n_steps)
 
-            if t['outcome']['outcome'] == 'cooperation':
-                coop_beliefs_p1.append((time_norm, df_with_beliefs['p1_belief_p2_stag'].values))
-                coop_beliefs_p2.append((time_norm, df_with_beliefs['p2_belief_p1_stag'].values))
-            else:
-                defect_beliefs_p1.append((time_norm, df_with_beliefs['p1_belief_p2_stag'].values))
-                defect_beliefs_p2.append((time_norm, df_with_beliefs['p2_belief_p1_stag'].values))
+            # IW model has joint_goal_stag column
+            beliefs = df_with_beliefs['joint_goal_stag'].values
 
-        # Plot P1 beliefs (top row)
+            if t['outcome']['outcome'] == 'cooperation':
+                coop_beliefs.append((time_norm, beliefs))
+            else:
+                defect_beliefs.append((time_norm, beliefs))
+
+        # Plot joint goal beliefs (top row = coop, bottom row = defect)
         ax = axes[0, col]
-        for time_norm, beliefs in coop_beliefs_p1:
+        for time_norm, beliefs in coop_beliefs:
             ax.plot(time_norm, beliefs, color=COOP_COLOR, alpha=0.3, linewidth=0.5)
-        for time_norm, beliefs in defect_beliefs_p1:
-            ax.plot(time_norm, beliefs, color=DEFECT_COLOR, alpha=0.3, linewidth=0.5)
 
         ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
         ax.set_ylim(0, 1)
         ax.set_xlim(0, 1)
         ax.set_title(f'{opponent.upper()}\n(n={len(opp_trials)})', fontweight='bold')
         if col == 0:
-            ax.set_ylabel('P1 Belief: P2→Stag')
+            ax.set_ylabel('Cooperation Trials\nP(Joint Goal = Stag)')
         ax.set_xticks([])
 
-        # Plot P2 beliefs (bottom row)
         ax = axes[1, col]
-        for time_norm, beliefs in coop_beliefs_p2:
-            ax.plot(time_norm, beliefs, color=COOP_COLOR, alpha=0.3, linewidth=0.5)
-        for time_norm, beliefs in defect_beliefs_p2:
+        for time_norm, beliefs in defect_beliefs:
             ax.plot(time_norm, beliefs, color=DEFECT_COLOR, alpha=0.3, linewidth=0.5)
 
         ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
@@ -497,7 +489,7 @@ def make_belief_overview(trials, output_file='belief_dynamics.png', n_samples=50
         ax.set_xlim(0, 1)
         ax.set_xlabel('Normalized Time')
         if col == 0:
-            ax.set_ylabel('P2 Belief: P1→Stag')
+            ax.set_ylabel('Defection Trials\nP(Joint Goal = Stag)')
 
     # Add legend
     legend_elements = [

@@ -16,7 +16,7 @@ from collections import defaultdict
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from stag_hunt import load_trial, find_trial_files, get_trial_info, get_outcome, RAW_DATA_DIR
-from models.belief_model_distance import BayesianIntentionModel
+from models.belief_model_iw import add_iw_beliefs_batch
 
 # Colors
 PLAYER1_COLOR = '#E63946'
@@ -34,22 +34,28 @@ def load_trials_with_beliefs(subject=None, opponent=None, max_trials=None):
     if max_trials:
         files = files[:max_trials]
 
-    model = BayesianIntentionModel(prior_stag=0.5, concentration=1.5, belief_bounds=(0.01, 0.99))
-
-    trials = []
+    # Load all trials
+    trial_dfs = []
+    infos = []
     for f in files:
         try:
-            df = load_trial(f)
-            df_beliefs = model.run_trial(df)
-            info = get_trial_info(f)
-            outcome = get_outcome(df)
-            trials.append({
-                'data': df_beliefs,
-                'info': info,
-                'outcome': outcome
-            })
+            trial_dfs.append(load_trial(f))
+            infos.append(get_trial_info(f))
         except:
             continue
+
+    # Compute beliefs in batch
+    trials_with_beliefs = add_iw_beliefs_batch(trial_dfs)
+
+    # Build result list
+    trials = []
+    for df_beliefs, info in zip(trials_with_beliefs, infos):
+        outcome = get_outcome(df_beliefs)
+        trials.append({
+            'data': df_beliefs,
+            'info': info,
+            'outcome': outcome
+        })
 
     return trials
 
@@ -131,30 +137,22 @@ def plot_trial_with_beliefs(ax_traj, ax_belief, trial):
     # Trajectory panel
     plot_single_trial(ax_traj, trial, show_title=False)
 
-    # Belief panel
+    # Belief panel (IW joint goal belief)
     time = np.arange(len(df))
-    ax_belief.fill_between(time, 0.5, df['p1_belief_p2_stag'],
-                           where=df['p1_belief_p2_stag'] >= 0.5,
-                           color=PLAYER1_COLOR, alpha=0.3, label='P1 belief')
-    ax_belief.fill_between(time, 0.5, df['p1_belief_p2_stag'],
-                           where=df['p1_belief_p2_stag'] < 0.5,
-                           color=PLAYER1_COLOR, alpha=0.3)
-    ax_belief.plot(time, df['p1_belief_p2_stag'], '-', color=PLAYER1_COLOR, linewidth=2)
-
-    ax_belief.fill_between(time, 0.5, df['p2_belief_p1_stag'],
-                           where=df['p2_belief_p1_stag'] >= 0.5,
-                           color=PLAYER2_COLOR, alpha=0.3, label='P2 belief')
-    ax_belief.fill_between(time, 0.5, df['p2_belief_p1_stag'],
-                           where=df['p2_belief_p1_stag'] < 0.5,
-                           color=PLAYER2_COLOR, alpha=0.3)
-    ax_belief.plot(time, df['p2_belief_p1_stag'], '-', color=PLAYER2_COLOR, linewidth=2)
+    belief = df['joint_goal_stag']
+    ax_belief.fill_between(time, 0.5, belief,
+                           where=belief >= 0.5,
+                           color=COOP_COLOR, alpha=0.3)
+    ax_belief.fill_between(time, 0.5, belief,
+                           where=belief < 0.5,
+                           color=DEFECT_COLOR, alpha=0.3)
+    ax_belief.plot(time, belief, '-', color='#264653', linewidth=2)
 
     ax_belief.axhline(0.5, color='gray', linestyle='--', alpha=0.5)
     ax_belief.set_ylim(0, 1)
     ax_belief.set_xlim(0, len(df))
-    ax_belief.set_ylabel('Belief\n(partner→stag)', fontsize=9)
+    ax_belief.set_ylabel('P(Joint Goal\n= Stag)', fontsize=9)
     ax_belief.set_xlabel('Frame', fontsize=9)
-    ax_belief.legend(loc='upper right', fontsize=8)
 
     # Title spanning both
     opp = info.get('opponent', '?')
@@ -319,14 +317,12 @@ def make_belief_summary(trials, output_file='belief_summary.png'):
         time_norm = np.linspace(0, 1, len(df))
         time_bins = np.linspace(0, 1, n_bins)
 
-        p1_interp = np.interp(time_bins, time_norm, df['p1_belief_p2_stag'])
-        p2_interp = np.interp(time_bins, time_norm, df['p2_belief_p1_stag'])
-        avg_belief = (p1_interp + p2_interp) / 2
+        belief_interp = np.interp(time_bins, time_norm, df['joint_goal_stag'])
 
         if t['outcome']['outcome'] == 'cooperation':
-            by_opponent[opp]['coop'].append(avg_belief)
+            by_opponent[opp]['coop'].append(belief_interp)
         else:
-            by_opponent[opp]['defect'].append(avg_belief)
+            by_opponent[opp]['defect'].append(belief_interp)
 
     opponents = ['computer', 'same', 'diff', 'ieeg']
 

@@ -1,63 +1,38 @@
 """
-Unified Models for Stag Hunt Cooperation Task
-
-This module provides clean entrypoints for all model variants and data loading.
+Stag Hunt Cooperation Task - Unified API
 
 Quick Start:
 ------------
 ```python
-from stag_hunt import DecisionModel, BeliefModel, load_trial, load_all_trials
+from stag_hunt import load_trial, load_all_trials, add_beliefs
 
 # Load data
-trial = load_trial('data/sub-120/.../trial.tsv')
+trial = load_trial('data/raw/sub-120/.../trial.tsv')
 trials = load_all_trials(subject='120', opponent='ieeg')
 
-# Recommended: Coordinated decision model
-decision_model = DecisionModel(
-    model_type='coordinated',
-    params={'temperature': 3.049, 'timing_tolerance': 0.865, 'action_noise': 10.0}
-)
+# Add beliefs using Imagined We model (best fit)
+trials_with_beliefs = add_beliefs(trials)
 
-# Recommended: Decision-based belief inference
-belief_model = BeliefModel(
-    inference_type='decision',
-    decision_model=decision_model
-)
-
-# Run belief updating on trial
-trial_with_beliefs = belief_model.run_trial(trial)
+# Or run full model comparison
+from models.compare_models import main
+# python models/compare_models.py --fit
 ```
 
-Model Types:
-------------
-DecisionModel:
-  - 'coordinated': Explicit timing constraints (recommended)
-  - 'basic': Free weight parameters
-
-BeliefModel:
-  - 'decision': Inverse inference through decision model (recommended)
-  - 'distance': Distance-based heuristics (faster, less principled)
+Models:
+-------
+- Imagined We (IW): Joint goal inference (best model, ΔAIC=136k over alternatives)
+- Standard: Per-player intention inference
+- See models/compare_models.py for full comparison
 
 Data Loading:
 -------------
-- load_trial(filepath): Load a single trial file
-- load_all_trials(...): Load multiple trials with optional filters
-- find_trial_files(...): Find trial files matching criteria
-- get_trial_info(filepath): Extract metadata from filename
-- get_outcome(trial_data): Determine cooperation/defection outcome
-- summarize_data(): Generate summary statistics
+- load_trial(filepath): Load a single trial
+- load_all_trials(...): Load multiple trials with filters
+- find_trial_files(...): Find trial files
+- get_outcome(trial): Get cooperation/defection outcome
 """
 
-import numpy as np
-import pandas as pd
-import json
-import os
-from models.decision_model_basic import UtilityDecisionModel
-from models.decision_model_coordinated import CoordinatedDecisionModel
-from models.belief_model_distance import BayesianIntentionModel
-from models.belief_model_decision import BayesianIntentionModelWithDecision
-
-# Import data loading utilities
+# Re-export data loading utilities
 from data_loader import (
     load_trial,
     load_all_trials,
@@ -71,215 +46,36 @@ from data_loader import (
     DERIVATIVES_DIR
 )
 
-
-def load_fitted_params(config_path='fitted_params.json'):
-    """
-    Load fitted parameters from config file.
-
-    Returns:
-    --------
-    dict : Model parameters, or None if file doesn't exist
-    """
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return None
-    return None
+# Re-export belief models
+from models.belief_model_iw import add_iw_beliefs_batch as add_beliefs
+from models.belief_model_jax import add_beliefs_batch_fast as add_standard_beliefs
 
 
-class DecisionModel:
-    """
-    Unified interface for decision models.
-
-    Parameters:
-    -----------
-    model_type : str
-        'coordinated' - Explicit timing constraints (recommended)
-        'basic' - Free weight parameters
-    params : dict
-        Model-specific parameters
-
-    For 'coordinated':
-        - temperature: float
-        - timing_tolerance: float
-        - action_noise: float
-        - n_directions: int (default 8)
-
-    For 'basic':
-        - temperature: float
-        - w_stag: float
-        - w_rabbit: float
-        - action_noise: float
-        - n_directions: int (default 8)
-    """
-
-    def __init__(self, model_type='coordinated', params=None):
-        self.model_type = model_type
-
-        if params is None:
-            # Load from fitted_params.json (required)
-            fitted_params = load_fitted_params()
-
-            if fitted_params is None or model_type not in fitted_params:
-                raise ValueError(
-                    f"No fitted parameters found for model '{model_type}'.\n"
-                    f"Please run: python stag_hunt.py --fit {model_type}"
-                )
-
-            # Use fitted parameters from config
-            params = {k: v for k, v in fitted_params[model_type].items()
-                     if k not in ['description', 'fit_info']}
-
-        self.params = params
-
-        # Initialize underlying model
-        if model_type == 'coordinated':
-            self.model = CoordinatedDecisionModel(
-                n_directions=params.get('n_directions', 8),
-                temperature=params['temperature'],
-                timing_tolerance=params['timing_tolerance'],
-                speed=1.0
-            )
-        elif model_type == 'basic':
-            self.model = UtilityDecisionModel(
-                n_directions=params.get('n_directions', 8),
-                temperature=params['temperature'],
-                w_stag=params['w_stag'],
-                w_rabbit=params['w_rabbit'],
-                speed=1.0
-            )
-        else:
-            raise ValueError(f"Unknown model_type: {model_type}")
-
-    def __getattr__(self, name):
-        """Delegate method calls to underlying model."""
-        return getattr(self.model, name)
-
-    def __repr__(self):
-        return f"DecisionModel(type='{self.model_type}', params={self.params})"
-
-
-class BeliefModel:
-    """
-    Unified interface for belief inference models.
-
-    Parameters:
-    -----------
-    inference_type : str
-        'decision' - Use decision model for inverse inference (recommended)
-        'distance' - Use distance-based heuristics (faster)
-    decision_model : DecisionModel or dict, optional
-        For 'decision' type: either DecisionModel instance or params dict
-    prior_stag : float
-        Initial belief that partner goes for stag (default 0.5)
-    belief_bounds : tuple
-        (min, max) bounds on beliefs (default (0.01, 0.99))
-    concentration : float
-        Only for 'distance' type: likelihood sharpness (default 1.5)
-    """
-
-    def __init__(self, inference_type='decision', decision_model=None,
-                 prior_stag=0.5, belief_bounds=(0.01, 0.99), concentration=1.5):
-        self.inference_type = inference_type
-
-        if inference_type == 'decision':
-            # Decision-based inference
-            if decision_model is None:
-                # Use default coordinated model
-                decision_model = DecisionModel(model_type='coordinated')
-            elif isinstance(decision_model, dict):
-                # Create from params
-                decision_model = DecisionModel(**decision_model)
-
-            # Extract params for the belief model
-            if hasattr(decision_model, 'params'):
-                decision_params = decision_model.params
-            else:
-                decision_params = {
-                    'temperature': decision_model.temperature,
-                    'timing_tolerance': decision_model.timing_tolerance,
-                    'action_noise': getattr(decision_model, 'action_noise', 1.0),
-                    'n_directions': decision_model.n_directions
-                }
-
-            self.model = BayesianIntentionModelWithDecision(
-                decision_model_params=decision_params,
-                prior_stag=prior_stag,
-                belief_bounds=belief_bounds
-            )
-
-        elif inference_type == 'distance':
-            # Distance-based inference
-            self.model = BayesianIntentionModel(
-                prior_stag=prior_stag,
-                concentration=concentration,
-                belief_bounds=belief_bounds,
-                forgetting_rate=0.0
-            )
-        else:
-            raise ValueError(f"Unknown inference_type: {inference_type}")
-
-    def run_trial(self, trial_data):
-        """Run belief inference on a trial."""
-        return self.model.run_trial(trial_data)
-
-    def __repr__(self):
-        return f"BeliefModel(type='{self.inference_type}')"
-
-
-# Convenience function for recommended configuration
-def get_recommended_models():
-    """
-    Get recommended model configuration.
-
-    Returns:
-    --------
-    decision_model : DecisionModel
-        Coordinated model with fitted parameters
-    belief_model : BeliefModel
-        Decision-based inference using the decision model
-    """
-    decision_model = DecisionModel(model_type='coordinated')
-    belief_model = BeliefModel(
-        inference_type='decision',
-        decision_model=decision_model
-    )
-    return decision_model, belief_model
+__all__ = [
+    # Data loading
+    'load_trial',
+    'load_all_trials',
+    'find_trial_files',
+    'get_trial_info',
+    'get_outcome',
+    'summarize_data',
+    'save_derivative',
+    'save_all_derivatives',
+    'RAW_DATA_DIR',
+    'DERIVATIVES_DIR',
+    # Belief models
+    'add_beliefs',
+    'add_standard_beliefs',
+]
 
 
 if __name__ == '__main__':
-    import argparse
-    import sys
-
-    parser = argparse.ArgumentParser(
-        description='Stag Hunt unified model interface',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run model comparison
-  python models/compare_models.py --fit
-
-  # Test the unified interface
-  python stag_hunt.py
-        """
-    )
-
-    args = parser.parse_args()
-
-    # Show usage example
-    print("Stag Hunt Unified Model Interface")
-    print("="*70)
-    print("\nUsage examples:")
-    print("\n1. Use fitted defaults:")
-    print("   from stag_hunt import DecisionModel, BeliefModel")
-    print("   decision_model = DecisionModel(model_type='coordinated')")
-    print("   belief_model = BeliefModel(inference_type='decision', decision_model=decision_model)")
-    print("\n2. Use custom parameters:")
-    print("   decision_model = DecisionModel(model_type='basic',")
-    print("                                  params={'temperature': 5.0, 'w_stag': 1.0, ...})")
-    print("\n3. Fit new defaults:")
-    print("   python stag_hunt.py --fit integrated")
-    print("\nFor tests, run: pytest tests/")
-    print("="*70)
+    print("Stag Hunt Unified API")
+    print("=" * 60)
+    print("\nUsage:")
+    print("  from stag_hunt import load_trial, add_beliefs")
+    print("  trials = load_all_trials(subject='120')")
+    print("  trials = add_beliefs(trials)  # IW model")
+    print("\nModel comparison:")
+    print("  python models/compare_models.py --fit")
+    print("=" * 60)
