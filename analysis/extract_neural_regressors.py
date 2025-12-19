@@ -21,7 +21,7 @@ import numpy as np
 import glob
 from typing import List, Tuple
 from models.belief_model_decision import BayesianIntentionModelWithDecision
-from models.hierarchical_goal_model import HierarchicalGoalModel
+# from models.hierarchical_goal_model import HierarchicalGoalModel  # Removed in cleanup
 
 
 class CrossTrialLearningModel:

@@ -258,36 +258,17 @@ if __name__ == '__main__':
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Fit a model and save as defaults
-  python stag_hunt.py --fit integrated
+  # Run model comparison
+  python models/compare_models.py --fit
 
   # Test the unified interface
   python stag_hunt.py
         """
     )
-    parser.add_argument('--fit', choices=['integrated', 'hierarchical', 'distance', 'distance_tiebreak'],
-                       help='Fit model and save parameters as defaults')
-    parser.add_argument('--method', default='L-BFGS-B',
-                       help='Optimization method for fitting (default: L-BFGS-B)')
 
     args = parser.parse_args()
 
-    # Handle --fit flag
-    if args.fit:
-        print(f"Fitting model '{args.fit}'...\n")
-        from models.fit import fit_model, save_as_defaults
-
-        # Run fitting
-        results = fit_model(args.fit, method=args.method, verbose=True)
-
-        # Save as defaults
-        save_as_defaults(results, verbose=True)
-
-        print(f"\n✓ Model '{args.fit}' fitted and saved as defaults")
-        print(f"  You can now use: DecisionModel(model_type='{args.fit}')")
-        sys.exit(0)
-
-    # Otherwise show usage example
+    # Show usage example
     print("Stag Hunt Unified Model Interface")
     print("="*70)
     print("\nUsage examples:")

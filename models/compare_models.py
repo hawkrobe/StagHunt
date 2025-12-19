@@ -1,639 +1,546 @@
 #!/usr/bin/env python3
 """
-Unified Model Comparison Framework for Stag Hunt
+JAX-accelerated model comparison for Stag Hunt.
 
-Compares multiple computational models on trajectory prediction:
-1. Null (random baseline)
-2. Distance-only (move toward closer target)
-3. Belief-based (Bayesian belief updates)
-4. Hierarchical (goal selection + plan execution)
-5. Cross-trial learning (evolving priors)
-
-Outputs:
-- Log-likelihood per model
-- AIC/BIC for model selection
-- Per-subject breakdown
-- Cross-validation results
-
-Usage:
-    python models/compare_models.py
-    python models/compare_models.py --subjects 120 258
-    python models/compare_models.py --cv  # Leave-one-subject-out CV
+Key insight: batch ALL observations into single arrays, then vmap over them.
+No Python loops over trials or timesteps.
 """
 
+import jax
+import jax.numpy as jnp
+from jax.scipy.stats import vonmises
+from jax.scipy.special import logsumexp
+from jax import jit, vmap
 import numpy as np
 import pandas as pd
-from scipy.stats import vonmises
-from scipy.optimize import minimize
-from typing import Dict, List, Tuple, Optional
-from abc import ABC, abstractmethod
-from collections import defaultdict
+from typing import List, Optional, Dict
 import sys
 from pathlib import Path
 
-# Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from data_loader import load_trial, find_trial_files, get_trial_info
 
-from data_loader import load_trial, find_trial_files, get_trial_info, get_outcome
+# Use CPU for consistency
+jax.config.update('jax_platform_name', 'cpu')
 
-
-# =============================================================================
-# Abstract Base Class
-# =============================================================================
-
-class TrajectoryModel(ABC):
-    """Base class for trajectory prediction models."""
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Model name for display."""
-        pass
-
-    @property
-    @abstractmethod
-    def n_params(self) -> int:
-        """Number of free parameters."""
-        pass
-
-    @abstractmethod
-    def predict_action_probs(self, state: Dict) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Predict action distribution given current state.
-
-        Returns:
-            angles: Array of possible movement angles
-            probs: Probability of each angle
-        """
-        pass
-
-    def compute_log_likelihood(self, trial_data: pd.DataFrame, player: str,
-                               subsample: int = 1) -> float:
-        """
-        Compute log-likelihood of observed trajectory.
-
-        Args:
-            trial_data: Trial dataframe
-            player: 'player1' or 'player2'
-            subsample: Only evaluate every Nth timestep (1 = all, 10 = every 10th)
-        """
-        partner = 'player2' if player == 'player1' else 'player1'
-
-        # Compute all movements at once
-        dx = trial_data[f'{player}_x'].diff().values[1:]
-        dy = trial_data[f'{player}_y'].diff().values[1:]
-
-        # Find steps with actual movement
-        movement_mask = (np.abs(dx) >= 0.5) | (np.abs(dy) >= 0.5)
-        if not movement_mask.any():
-            return 0.0
-
-        # Get indices of moving timesteps
-        moving_indices = np.where(movement_mask)[0]
-
-        # Subsample if requested
-        if subsample > 1:
-            moving_indices = moving_indices[::subsample]
-
-        if len(moving_indices) == 0:
-            return 0.0
-
-        # Observed angles
-        observed_angles = np.arctan2(dy[moving_indices], dx[moving_indices])
-
-        # Get state arrays
-        prev_indices = moving_indices
-        player_x = trial_data[f'{player}_x'].values[prev_indices]
-        player_y = trial_data[f'{player}_y'].values[prev_indices]
-        partner_x = trial_data[f'{partner}_x'].values[prev_indices]
-        partner_y = trial_data[f'{partner}_y'].values[prev_indices]
-        stag_x = trial_data['stag_x'].values[prev_indices + 1]
-        stag_y = trial_data['stag_y'].values[prev_indices + 1]
-        rabbit_x = trial_data['rabbit_x'].values[prev_indices + 1]
-        rabbit_y = trial_data['rabbit_y'].values[prev_indices + 1]
-
-        # Beliefs
-        belief_col = f'p{player[-1]}' + '_belief_p' + f'{"2" if player[-1]=="1" else "1"}' + '_stag'
-        if belief_col in trial_data.columns:
-            beliefs = trial_data[belief_col].values[prev_indices]
-        else:
-            beliefs = np.full(len(prev_indices), 0.5)
-
-        # Precompute angles array once
-        angles = self.predict_action_probs({'player_x': 0, 'player_y': 0,
-                                            'partner_x': 0, 'partner_y': 0,
-                                            'stag_x': 1, 'stag_y': 0,
-                                            'rabbit_x': -1, 'rabbit_y': 0,
-                                            'belief': 0.5})[0]
-
-        # Compute log-likelihood
-        total_ll = 0.0
-        kappa = 2.0
-
-        for i in range(len(observed_angles)):
-            state = {
-                'player_x': player_x[i], 'player_y': player_y[i],
-                'partner_x': partner_x[i], 'partner_y': partner_y[i],
-                'stag_x': stag_x[i], 'stag_y': stag_y[i],
-                'rabbit_x': rabbit_x[i], 'rabbit_y': rabbit_y[i],
-                'belief': beliefs[i]
-            }
-
-            _, probs = self.predict_action_probs(state)
-
-            # Von Mises mixture likelihood (vectorized)
-            likelihood = np.sum(probs * vonmises.pdf(observed_angles[i], kappa, loc=angles))
-            total_ll += np.log(max(likelihood, 1e-10))
-
-        # Scale up if subsampled
-        if subsample > 1:
-            total_ll *= subsample
-
-        return total_ll
+# 8 discrete action directions
+ACTION_ANGLES = jnp.array([i * 2 * jnp.pi / 8 for i in range(8)])
 
 
 # =============================================================================
-# Model Implementations
+# Core likelihood functions (operate on single observations)
 # =============================================================================
 
-class NullModel(TrajectoryModel):
-    """Baseline: uniform random movement."""
+def single_obs_ll_distance(obs_angle, px, py, stag_x, stag_y, rabbit_x, rabbit_y,
+                           temperature, kappa):
+    """Log-likelihood for single observation under distance model."""
+    # Distance to each target
+    dist_stag = jnp.sqrt((stag_x - px)**2 + (stag_y - py)**2)
+    dist_rabbit = jnp.sqrt((rabbit_x - px)**2 + (rabbit_y - py)**2)
 
-    def __init__(self, n_directions: int = 8):
-        self.angles = np.linspace(0, 2*np.pi, n_directions, endpoint=False)
+    # Angle to each target
+    angle_stag = jnp.arctan2(stag_y - py, stag_x - px)
+    angle_rabbit = jnp.arctan2(rabbit_y - py, rabbit_x - px)
 
-    @property
-    def name(self) -> str:
-        return "Null (Random)"
+    # Choose closer target
+    go_stag = dist_stag < dist_rabbit
+    target_angle = jnp.where(go_stag, angle_stag, angle_rabbit)
 
-    @property
-    def n_params(self) -> int:
-        return 0
+    # Utility for each of 8 actions (cosine alignment with target)
+    action_utils = jnp.cos(ACTION_ANGLES - target_angle)
 
-    def predict_action_probs(self, state: Dict) -> Tuple[np.ndarray, np.ndarray]:
-        probs = np.ones(len(self.angles)) / len(self.angles)
-        return self.angles, probs
+    # Softmax to get action probabilities
+    action_probs = jax.nn.softmax(action_utils * temperature)
 
-
-class DistanceModel(TrajectoryModel):
-    """Move toward closer target (no belief reasoning)."""
-
-    def __init__(self, temperature: float = 3.0, n_directions: int = 8):
-        self.temperature = temperature
-        self.angles = np.linspace(0, 2*np.pi, n_directions, endpoint=False)
-
-    @property
-    def name(self) -> str:
-        return "Distance-Only"
-
-    @property
-    def n_params(self) -> int:
-        return 1  # temperature
-
-    def predict_action_probs(self, state: Dict) -> Tuple[np.ndarray, np.ndarray]:
-        # Distance to each target
-        dist_stag = np.sqrt((state['stag_x'] - state['player_x'])**2 +
-                           (state['stag_y'] - state['player_y'])**2)
-        dist_rabbit = np.sqrt((state['rabbit_x'] - state['player_x'])**2 +
-                             (state['rabbit_y'] - state['player_y'])**2)
-
-        # Choose closer target
-        if dist_stag < dist_rabbit:
-            target_x, target_y = state['stag_x'], state['stag_y']
-        else:
-            target_x, target_y = state['rabbit_x'], state['rabbit_y']
-
-        # Angle to target
-        angle_to_target = np.arctan2(target_y - state['player_y'],
-                                     target_x - state['player_x'])
-
-        # Softmax over alignment
-        utilities = np.cos(self.angles - angle_to_target)
-        exp_utils = np.exp(self.temperature * utilities)
-        probs = exp_utils / exp_utils.sum()
-
-        return self.angles, probs
+    # Log-likelihood: mixture of von Mises
+    log_components = vonmises.logpdf(obs_angle - ACTION_ANGLES, kappa) + jnp.log(action_probs)
+    return logsumexp(log_components)
 
 
-class BeliefModel(TrajectoryModel):
-    """Use beliefs about partner to decide between targets."""
+def single_obs_ll_belief(obs_angle, px, py, stag_x, stag_y, rabbit_x, rabbit_y,
+                         belief, temperature, kappa):
+    """Log-likelihood for single observation under belief model."""
+    # Angle to each target
+    angle_stag = jnp.arctan2(stag_y - py, stag_x - px)
+    angle_rabbit = jnp.arctan2(rabbit_y - py, rabbit_x - px)
 
-    def __init__(self, temperature: float = 3.0, n_directions: int = 8):
-        self.temperature = temperature
-        self.angles = np.linspace(0, 2*np.pi, n_directions, endpoint=False)
+    # Utility weighted by belief
+    util_stag = jnp.cos(ACTION_ANGLES - angle_stag)
+    util_rabbit = jnp.cos(ACTION_ANGLES - angle_rabbit)
+    action_utils = belief * util_stag + (1 - belief) * util_rabbit
 
-    @property
-    def name(self) -> str:
-        return "Belief-Based"
+    # Softmax
+    action_probs = jax.nn.softmax(action_utils * temperature)
 
-    @property
-    def n_params(self) -> int:
-        return 1  # temperature
-
-    def predict_action_probs(self, state: Dict) -> Tuple[np.ndarray, np.ndarray]:
-        belief = state.get('belief', 0.5)
-
-        # Angles to targets
-        angle_stag = np.arctan2(state['stag_y'] - state['player_y'],
-                                state['stag_x'] - state['player_x'])
-        angle_rabbit = np.arctan2(state['rabbit_y'] - state['player_y'],
-                                  state['rabbit_x'] - state['player_x'])
-
-        # Utility = weighted combination based on belief
-        utilities = np.zeros(len(self.angles))
-        for i, angle in enumerate(self.angles):
-            util_stag = np.cos(angle - angle_stag)
-            util_rabbit = np.cos(angle - angle_rabbit)
-            utilities[i] = belief * util_stag + (1 - belief) * util_rabbit
-
-        exp_utils = np.exp(self.temperature * utilities)
-        probs = exp_utils / exp_utils.sum()
-
-        return self.angles, probs
+    # Log-likelihood
+    log_components = vonmises.logpdf(obs_angle - ACTION_ANGLES, kappa) + jnp.log(action_probs)
+    return logsumexp(log_components)
 
 
-class CoordinationModel(TrajectoryModel):
-    """Belief-based with coordination probability (P_coord = belief × timing)."""
+def single_obs_ll_coordination(obs_angle, px, py, partner_x, partner_y,
+                               stag_x, stag_y, rabbit_x, rabbit_y,
+                               belief, temperature, kappa, timing_tol):
+    """Log-likelihood for single observation under coordination model."""
+    # Compute P_coord = belief × timing_alignment
+    dist_player = jnp.sqrt((stag_x - px)**2 + (stag_y - py)**2)
+    dist_partner = jnp.sqrt((stag_x - partner_x)**2 + (stag_y - partner_y)**2)
+    time_diff = jnp.abs(dist_player - dist_partner)
+    timing_align = jnp.exp(-0.5 * (time_diff / timing_tol)**2)
+    P_coord = belief * timing_align
 
-    def __init__(self, temperature: float = 3.0, timing_tolerance: float = 150.0,
-                 n_directions: int = 8):
-        self.temperature = temperature
-        self.timing_tolerance = timing_tolerance
-        self.angles = np.linspace(0, 2*np.pi, n_directions, endpoint=False)
+    # Angles to targets
+    angle_stag = jnp.arctan2(stag_y - py, stag_x - px)
+    angle_rabbit = jnp.arctan2(rabbit_y - py, rabbit_x - px)
 
-    @property
-    def name(self) -> str:
-        return "Coordination (P_coord)"
+    # Utilities weighted by P_coord
+    util_stag = jnp.cos(ACTION_ANGLES - angle_stag)
+    util_rabbit = jnp.cos(ACTION_ANGLES - angle_rabbit)
+    action_utils = P_coord * util_stag + (1 - P_coord) * util_rabbit
 
-    @property
-    def n_params(self) -> int:
-        return 2  # temperature, timing_tolerance
+    # Softmax
+    action_probs = jax.nn.softmax(action_utils * temperature)
 
-    def predict_action_probs(self, state: Dict) -> Tuple[np.ndarray, np.ndarray]:
-        belief = state.get('belief', 0.5)
-
-        # Compute P_coord = belief × timing_alignment
-        dist_player = np.sqrt((state['stag_x'] - state['player_x'])**2 +
-                             (state['stag_y'] - state['player_y'])**2)
-        dist_partner = np.sqrt((state['stag_x'] - state['partner_x'])**2 +
-                              (state['stag_y'] - state['partner_y'])**2)
-
-        time_diff = abs(dist_player - dist_partner)
-        timing_align = np.exp(-0.5 * (time_diff / self.timing_tolerance)**2)
-        P_coord = belief * timing_align
-
-        # Angles to targets
-        angle_stag = np.arctan2(state['stag_y'] - state['player_y'],
-                                state['stag_x'] - state['player_x'])
-        angle_rabbit = np.arctan2(state['rabbit_y'] - state['player_y'],
-                                  state['rabbit_x'] - state['player_x'])
-
-        # Expected utility under coordination
-        utilities = np.zeros(len(self.angles))
-        for i, angle in enumerate(self.angles):
-            util_stag = np.cos(angle - angle_stag)
-            util_rabbit = np.cos(angle - angle_rabbit)
-            # Stag only worth pursuing if coordination likely
-            utilities[i] = P_coord * util_stag + (1 - P_coord) * util_rabbit
-
-        exp_utils = np.exp(self.temperature * utilities)
-        probs = exp_utils / exp_utils.sum()
-
-        return self.angles, probs
+    # Log-likelihood
+    log_components = vonmises.logpdf(obs_angle - ACTION_ANGLES, kappa) + jnp.log(action_probs)
+    return logsumexp(log_components)
 
 
-class HierarchicalModel(TrajectoryModel):
-    """Two-level: goal selection (soft) + plan execution (hard)."""
+def single_obs_ll_imagined_we(obs_angle, px, py, partner_x, partner_y,
+                               stag_x, stag_y, rabbit_x, rabbit_y,
+                               joint_goal_belief, temperature, kappa):
+    """
+    Log-likelihood for single observation under Imagined We model (Tang et al.).
 
-    def __init__(self, goal_temp: float = 2.0, exec_temp: float = 10.0,
-                 timing_tolerance: float = 150.0, n_directions: int = 8):
-        self.goal_temp = goal_temp
-        self.exec_temp = exec_temp
-        self.timing_tolerance = timing_tolerance
-        self.angles = np.linspace(0, 2*np.pi, n_directions, endpoint=False)
+    Key difference from Coordination model:
+    - Uses joint goal belief P(stag is OUR joint goal) instead of P(partner wants stag)
+    - The joint goal directly determines action selection (no timing modulation)
 
-    @property
-    def name(self) -> str:
-        return "Hierarchical (Goal+Plan)"
+    In the IW framework, agents imagine a "We" that has committed to a joint goal.
+    Given this joint goal, each agent moves toward that target.
+    """
+    # Angles to targets
+    angle_stag = jnp.arctan2(stag_y - py, stag_x - px)
+    angle_rabbit = jnp.arctan2(rabbit_y - py, rabbit_x - px)
 
-    @property
-    def n_params(self) -> int:
-        return 3  # goal_temp, exec_temp, timing_tolerance
+    # Under IW: action is determined by joint goal
+    # If joint goal = stag, go to stag; if joint goal = rabbit, go to rabbit
+    util_stag = jnp.cos(ACTION_ANGLES - angle_stag)
+    util_rabbit = jnp.cos(ACTION_ANGLES - angle_rabbit)
+    action_utils = joint_goal_belief * util_stag + (1 - joint_goal_belief) * util_rabbit
 
-    def predict_action_probs(self, state: Dict) -> Tuple[np.ndarray, np.ndarray]:
-        belief = state.get('belief', 0.5)
+    # Softmax action selection
+    action_probs = jax.nn.softmax(action_utils * temperature)
 
-        # Level 1: Goal selection
-        # P_coord for stag utility
-        dist_player = np.sqrt((state['stag_x'] - state['player_x'])**2 +
-                             (state['stag_y'] - state['player_y'])**2)
-        dist_partner = np.sqrt((state['stag_x'] - state['partner_x'])**2 +
-                              (state['stag_y'] - state['partner_y'])**2)
-        time_diff = abs(dist_player - dist_partner)
-        timing_align = np.exp(-0.5 * (time_diff / self.timing_tolerance)**2)
-        P_coord = belief * timing_align
-
-        U_stag = P_coord  # Expected value of stag
-        U_rabbit = 1.0    # Guaranteed rabbit value
-
-        # Softmax goal selection
-        goal_utils = np.array([U_stag, U_rabbit])
-        exp_goal = np.exp(self.goal_temp * goal_utils)
-        P_stag = exp_goal[0] / exp_goal.sum()
-        P_rabbit = 1 - P_stag
-
-        # Level 2: Plan execution
-        angle_stag = np.arctan2(state['stag_y'] - state['player_y'],
-                                state['stag_x'] - state['player_x'])
-        angle_rabbit = np.arctan2(state['rabbit_y'] - state['player_y'],
-                                  state['rabbit_x'] - state['player_x'])
-
-        # Action distribution if going for stag
-        utils_stag = np.cos(self.angles - angle_stag)
-        exp_stag = np.exp(self.exec_temp * utils_stag)
-        probs_stag = exp_stag / exp_stag.sum()
-
-        # Action distribution if going for rabbit
-        utils_rabbit = np.cos(self.angles - angle_rabbit)
-        exp_rabbit = np.exp(self.exec_temp * utils_rabbit)
-        probs_rabbit = exp_rabbit / exp_rabbit.sum()
-
-        # Mixture
-        probs = P_stag * probs_stag + P_rabbit * probs_rabbit
-
-        return self.angles, probs
+    # Log-likelihood
+    log_components = vonmises.logpdf(obs_angle - ACTION_ANGLES, kappa) + jnp.log(action_probs)
+    return logsumexp(log_components)
 
 
 # =============================================================================
-# Model Comparison
+# Vectorized versions using vmap
 # =============================================================================
 
-def add_beliefs_to_trial(trial_data: pd.DataFrame) -> pd.DataFrame:
-    """Add belief columns using distance-based model."""
-    from belief_model_distance import BayesianIntentionModel
+# vmap over all observations at once
+_vmap_distance = jit(vmap(single_obs_ll_distance,
+                          in_axes=(0, 0, 0, 0, 0, 0, 0, None, None)))
 
-    model = BayesianIntentionModel(
-        prior_stag=0.5,
-        concentration=1.5,
-        belief_bounds=(0.01, 0.99)
+_vmap_belief = jit(vmap(single_obs_ll_belief,
+                        in_axes=(0, 0, 0, 0, 0, 0, 0, 0, None, None)))
+
+_vmap_coordination = jit(vmap(single_obs_ll_coordination,
+                              in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None, None)))
+
+_vmap_imagined_we = jit(vmap(single_obs_ll_imagined_we,
+                              in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, None, None)))
+
+
+@jit
+def null_model_ll(n_obs):
+    """Null model: uniform over circle."""
+    return n_obs * jnp.log(1.0 / (2 * jnp.pi))
+
+
+def distance_model_ll(data, temperature=3.0, kappa=2.0):
+    """Distance model on batched data."""
+    lls = _vmap_distance(
+        data['obs'], data['px'], data['py'],
+        data['stag_x'], data['stag_y'],
+        data['rabbit_x'], data['rabbit_y'],
+        temperature, kappa
     )
-    return model.run_trial(trial_data)
+    return jnp.sum(lls)
 
 
-def evaluate_model_on_trials(model: TrajectoryModel,
-                             trials: List[pd.DataFrame],
-                             add_beliefs: bool = True,
-                             subsample: int = 1) -> Dict:
-    """Evaluate a model on a list of trials."""
-    total_ll = 0.0
-    n_trials = 0
-    n_datapoints = 0
-    trial_lls = []
+def belief_model_ll(data, temperature=3.0, kappa=2.0):
+    """Belief model on batched data."""
+    lls = _vmap_belief(
+        data['obs'], data['px'], data['py'],
+        data['stag_x'], data['stag_y'],
+        data['rabbit_x'], data['rabbit_y'],
+        data['beliefs'],
+        temperature, kappa
+    )
+    return jnp.sum(lls)
+
+
+def coordination_model_ll(data, temperature=3.0, kappa=2.0, timing_tol=500.0):
+    """Coordination model on batched data."""
+    lls = _vmap_coordination(
+        data['obs'], data['px'], data['py'],
+        data['partner_x'], data['partner_y'],
+        data['stag_x'], data['stag_y'],
+        data['rabbit_x'], data['rabbit_y'],
+        data['beliefs'],
+        temperature, kappa, timing_tol
+    )
+    return jnp.sum(lls)
+
+
+def imagined_we_model_ll(data, temperature=3.0, kappa=2.0):
+    """
+    Imagined We model on batched data.
+
+    Uses joint goal belief P(stag is OUR joint goal) instead of
+    individual partner intention belief.
+    """
+    lls = _vmap_imagined_we(
+        data['obs'], data['px'], data['py'],
+        data['partner_x'], data['partner_y'],
+        data['stag_x'], data['stag_y'],
+        data['rabbit_x'], data['rabbit_y'],
+        data['iw_beliefs'],  # Joint goal beliefs from IW model
+        temperature, kappa
+    )
+    return jnp.sum(lls)
+
+
+# =============================================================================
+# Data extraction - batch ALL trials into single arrays
+# =============================================================================
+
+def extract_all_data(trials: List[pd.DataFrame]) -> Dict[str, jnp.ndarray]:
+    """Extract and concatenate data from all trials into batched arrays."""
+    all_obs = []
+    all_px, all_py = [], []
+    all_partner_x, all_partner_y = [], []
+    all_stag_x, all_stag_y = [], []
+    all_rabbit_x, all_rabbit_y = [], []
+    all_beliefs = []
+    all_iw_beliefs = []
 
     for trial in trials:
-        # Add beliefs if needed
-        if add_beliefs and 'p1_belief_p2_stag' not in trial.columns:
-            try:
-                trial = add_beliefs_to_trial(trial)
-            except:
+        for player in ['player1', 'player2']:
+            partner = 'player2' if player == 'player1' else 'player1'
+
+            # Movement angles
+            dx = np.diff(trial[f'{player}_x'].values)
+            dy = np.diff(trial[f'{player}_y'].values)
+            valid = (np.abs(dx) > 0.5) | (np.abs(dy) > 0.5)
+
+            if not valid.any():
                 continue
 
-        try:
-            ll_p1 = model.compute_log_likelihood(trial, 'player1', subsample=subsample)
-            ll_p2 = model.compute_log_likelihood(trial, 'player2', subsample=subsample)
-            trial_ll = ll_p1 + ll_p2
+            idx = np.where(valid)[0]
 
-            total_ll += trial_ll
-            trial_lls.append(trial_ll)
-            n_trials += 1
-            n_datapoints += len(trial) * 2
-        except Exception as e:
-            continue
+            all_obs.append(np.arctan2(dy[valid], dx[valid]))
+            all_px.append(trial[f'{player}_x'].values[idx])
+            all_py.append(trial[f'{player}_y'].values[idx])
+            all_partner_x.append(trial[f'{partner}_x'].values[idx])
+            all_partner_y.append(trial[f'{partner}_y'].values[idx])
+            all_stag_x.append(trial['stag_x'].values[idx + 1])
+            all_stag_y.append(trial['stag_y'].values[idx + 1])
+            all_rabbit_x.append(trial['rabbit_x'].values[idx + 1])
+            all_rabbit_y.append(trial['rabbit_y'].values[idx + 1])
 
-    # Compute AIC/BIC
-    k = model.n_params
-    aic = 2 * k - 2 * total_ll
-    bic = k * np.log(n_datapoints) - 2 * total_ll if n_datapoints > 0 else np.inf
+            # Standard beliefs (partner intention)
+            p_num = player[-1]
+            partner_num = '2' if p_num == '1' else '1'
+            belief_col = f'p{p_num}_belief_p{partner_num}_stag'
+            if belief_col in trial.columns:
+                all_beliefs.append(trial[belief_col].values[idx])
+            else:
+                all_beliefs.append(np.full(len(idx), 0.5))
 
+            # IW beliefs (joint goal)
+            if 'joint_goal_stag' in trial.columns:
+                all_iw_beliefs.append(trial['joint_goal_stag'].values[idx])
+            else:
+                all_iw_beliefs.append(np.full(len(idx), 0.5))
+
+    # Concatenate and convert to JAX arrays
     return {
-        'model': model.name,
-        'n_params': k,
-        'log_likelihood': total_ll,
-        'mean_ll_per_trial': total_ll / n_trials if n_trials > 0 else 0,
-        'n_trials': n_trials,
-        'n_datapoints': n_datapoints,
-        'aic': aic,
-        'bic': bic,
-        'trial_lls': trial_lls
+        'obs': jnp.array(np.concatenate(all_obs)),
+        'px': jnp.array(np.concatenate(all_px)),
+        'py': jnp.array(np.concatenate(all_py)),
+        'partner_x': jnp.array(np.concatenate(all_partner_x)),
+        'partner_y': jnp.array(np.concatenate(all_partner_y)),
+        'stag_x': jnp.array(np.concatenate(all_stag_x)),
+        'stag_y': jnp.array(np.concatenate(all_stag_y)),
+        'rabbit_x': jnp.array(np.concatenate(all_rabbit_x)),
+        'rabbit_y': jnp.array(np.concatenate(all_rabbit_y)),
+        'beliefs': jnp.array(np.concatenate(all_beliefs)),
+        'iw_beliefs': jnp.array(np.concatenate(all_iw_beliefs)),
     }
 
 
-def load_trials_by_subject(subjects: Optional[List[str]] = None) -> Dict[str, List[pd.DataFrame]]:
-    """Load trials organized by subject."""
-    trials_by_subject = defaultdict(list)
+def add_beliefs_to_trials(trials: List[pd.DataFrame], prior=0.5, concentration=1.5) -> List[pd.DataFrame]:
+    """Add belief columns to trials using fast JAX version (both standard and IW)."""
+    from belief_model_jax import add_beliefs_batch_fast
+    from belief_model_iw import add_iw_beliefs_batch
 
+    # Add standard beliefs (partner intention)
+    trials = add_beliefs_batch_fast(trials, prior=prior, concentration=concentration)
+
+    # Add IW beliefs (joint goal)
+    trials = add_iw_beliefs_batch(trials, prior=prior, concentration=concentration)
+
+    return trials
+
+
+def load_trials(subjects: Optional[List[str]] = None) -> List[pd.DataFrame]:
+    """Load trials from raw data."""
     files = find_trial_files(task_type='main')
 
+    trials = []
     for f in files:
         info = get_trial_info(f)
         subject = info.get('subject')
-
-        # Skip if no subject or filtered out
         if not subject:
             continue
         if subjects and subject not in subjects:
             continue
-
         try:
-            trial = load_trial(f)
-            trials_by_subject[subject].append(trial)
+            trials.append(load_trial(f))
         except:
             continue
 
-    return dict(trials_by_subject)
+    return trials
 
 
-def run_comparison(subjects: Optional[List[str]] = None,
-                   verbose: bool = True,
-                   subsample: int = 1) -> pd.DataFrame:
-    """Run full model comparison."""
+# =============================================================================
+# Parameter fitting with JAX native optimizer
+# =============================================================================
 
-    # Initialize models
-    models = [
-        NullModel(),
-        DistanceModel(temperature=3.0),
-        BeliefModel(temperature=3.0),
-        CoordinationModel(temperature=3.0, timing_tolerance=150.0),
-        HierarchicalModel(goal_temp=2.0, exec_temp=10.0, timing_tolerance=150.0),
-    ]
-
-    # Load data
-    if verbose:
-        print("=" * 70)
-        print("MODEL COMPARISON ON STAG HUNT DATA")
-        print("=" * 70)
-        if subsample > 1:
-            print(f"(Fast mode: evaluating every {subsample}th timestep)")
-        print("\nLoading trials...")
-
-    trials_by_subject = load_trials_by_subject(subjects)
-    all_trials = [t for trials in trials_by_subject.values() for t in trials]
-
-    if verbose:
-        print(f"Loaded {len(all_trials)} trials from {len(trials_by_subject)} subjects")
-        print(f"Subjects: {sorted(trials_by_subject.keys())}")
-
-    # Evaluate each model
-    results = []
-
-    if verbose:
-        print("\n" + "-" * 70)
-        print("Evaluating models...")
-        print("-" * 70)
-
-    for model in models:
-        if verbose:
-            print(f"\n  {model.name}...", end=" ", flush=True)
-
-        result = evaluate_model_on_trials(model, all_trials, subsample=subsample)
-        results.append(result)
-
-        if verbose:
-            print(f"LL = {result['log_likelihood']:.1f}")
-
-    # Create results dataframe
-    df = pd.DataFrame(results)
-
-    # Add delta columns (relative to null)
-    null_ll = df[df['model'] == 'Null (Random)']['log_likelihood'].values[0]
-    df['delta_ll'] = df['log_likelihood'] - null_ll
-
-    null_aic = df[df['model'] == 'Null (Random)']['aic'].values[0]
-    df['delta_aic'] = df['aic'] - null_aic
-
-    if verbose:
-        print("\n" + "=" * 70)
-        print("RESULTS")
-        print("=" * 70)
-
-        print("\n{:<25} {:>8} {:>12} {:>10} {:>10}".format(
-            "Model", "Params", "Log-Lik", "ΔAIC", "ΔBIC"))
-        print("-" * 70)
-
-        # Sort by AIC
-        df_sorted = df.sort_values('aic')
-        best_aic = df_sorted['aic'].iloc[0]
-        best_bic = df_sorted['bic'].iloc[0]
-
-        for _, row in df_sorted.iterrows():
-            delta_aic = row['aic'] - best_aic
-            delta_bic = row['bic'] - best_bic
-            print("{:<25} {:>8} {:>12.1f} {:>10.1f} {:>10.1f}".format(
-                row['model'], row['n_params'], row['log_likelihood'],
-                delta_aic, delta_bic))
-
-        print("\n" + "=" * 70)
-        winner = df_sorted.iloc[0]['model']
-        print(f"Best model by AIC: {winner}")
-        print("=" * 70)
-
-    return df
+from jax.scipy.optimize import minimize as jax_minimize
 
 
-def run_cross_validation(verbose: bool = True) -> pd.DataFrame:
-    """Leave-one-subject-out cross-validation."""
+def fit_model(model_name: str, data: Dict[str, jnp.ndarray]) -> Dict:
+    """Fit model parameters using JAX's native BFGS optimizer."""
 
-    models = [
-        NullModel(),
-        DistanceModel(temperature=3.0),
-        BeliefModel(temperature=3.0),
-        CoordinationModel(temperature=3.0, timing_tolerance=150.0),
-        HierarchicalModel(goal_temp=2.0, exec_temp=10.0, timing_tolerance=150.0),
-    ]
+    if model_name == 'Null':
+        n_obs = len(data['obs'])
+        return {'params': {}, 'll': float(null_model_ll(n_obs)), 'n_params': 0}
 
-    if verbose:
-        print("=" * 70)
-        print("LEAVE-ONE-SUBJECT-OUT CROSS-VALIDATION")
-        print("=" * 70)
+    elif model_name == 'Distance':
+        def neg_ll(params):
+            # Use softplus to keep params positive
+            temp = jax.nn.softplus(params[0])
+            kappa = jax.nn.softplus(params[1])
+            return -distance_model_ll(data, temperature=temp, kappa=kappa)
 
-    # Load all data
-    trials_by_subject = load_trials_by_subject()
-    subjects = sorted(trials_by_subject.keys())
+        # Initialize in unconstrained space (inverse softplus of [3.0, 2.0])
+        x0 = jnp.array([jnp.log(jnp.exp(3.0) - 1), jnp.log(jnp.exp(2.0) - 1)])
+        result = jax_minimize(neg_ll, x0=x0, method='BFGS')
 
-    if verbose:
-        print(f"\nSubjects: {subjects}")
-        print(f"Total trials: {sum(len(t) for t in trials_by_subject.values())}")
+        temp = float(jax.nn.softplus(result.x[0]))
+        kappa = float(jax.nn.softplus(result.x[1]))
+        return {
+            'params': {'temperature': temp, 'kappa': kappa},
+            'll': -float(result.fun),
+            'n_params': 2
+        }
 
-    # Track results per fold
-    cv_results = {model.name: [] for model in models}
+    elif model_name == 'Belief':
+        def neg_ll(params):
+            temp = jax.nn.softplus(params[0])
+            kappa = jax.nn.softplus(params[1])
+            return -belief_model_ll(data, temperature=temp, kappa=kappa)
 
-    for held_out in subjects:
-        if verbose:
-            print(f"\n  Fold: hold out {held_out}...", end=" ", flush=True)
+        x0 = jnp.array([jnp.log(jnp.exp(3.0) - 1), jnp.log(jnp.exp(2.0) - 1)])
+        result = jax_minimize(neg_ll, x0=x0, method='BFGS')
 
-        # Test trials = held out subject
-        test_trials = trials_by_subject[held_out]
+        temp = float(jax.nn.softplus(result.x[0]))
+        kappa = float(jax.nn.softplus(result.x[1]))
+        return {
+            'params': {'temperature': temp, 'kappa': kappa},
+            'll': -float(result.fun),
+            'n_params': 2
+        }
 
-        for model in models:
-            result = evaluate_model_on_trials(model, test_trials)
-            cv_results[model.name].append(result['log_likelihood'])
+    elif model_name == 'Coordination':
+        def neg_ll(params):
+            temp = jax.nn.softplus(params[0])
+            kappa = jax.nn.softplus(params[1])
+            tol = jnp.exp(params[2])  # log-scale for timing_tol
+            return -coordination_model_ll(data, temperature=temp, kappa=kappa, timing_tol=tol)
 
-        if verbose:
-            print("done")
+        x0 = jnp.array([
+            jnp.log(jnp.exp(3.0) - 1),  # softplus^-1(3)
+            jnp.log(jnp.exp(2.0) - 1),  # softplus^-1(2)
+            jnp.log(500.0)               # log(500)
+        ])
+        result = jax_minimize(neg_ll, x0=x0, method='BFGS')
 
-    # Aggregate
-    summary = []
-    for model in models:
-        lls = cv_results[model.name]
-        summary.append({
-            'model': model.name,
-            'n_params': model.n_params,
-            'mean_cv_ll': np.mean(lls),
-            'std_cv_ll': np.std(lls),
-            'total_cv_ll': np.sum(lls)
-        })
+        temp = float(jax.nn.softplus(result.x[0]))
+        kappa = float(jax.nn.softplus(result.x[1]))
+        tol = float(jnp.exp(result.x[2]))
+        return {
+            'params': {'temperature': temp, 'kappa': kappa, 'timing_tol': tol},
+            'll': -float(result.fun),
+            'n_params': 3
+        }
 
-    df = pd.DataFrame(summary)
+    elif model_name == 'ImagineWe':
+        def neg_ll(params):
+            temp = jax.nn.softplus(params[0])
+            kappa = jax.nn.softplus(params[1])
+            return -imagined_we_model_ll(data, temperature=temp, kappa=kappa)
 
-    if verbose:
-        print("\n" + "=" * 70)
-        print("CROSS-VALIDATION RESULTS")
-        print("=" * 70)
+        x0 = jnp.array([jnp.log(jnp.exp(3.0) - 1), jnp.log(jnp.exp(2.0) - 1)])
+        result = jax_minimize(neg_ll, x0=x0, method='BFGS')
 
-        print("\n{:<25} {:>12} {:>12} {:>12}".format(
-            "Model", "Mean CV LL", "Std", "Total CV LL"))
-        print("-" * 70)
+        temp = float(jax.nn.softplus(result.x[0]))
+        kappa = float(jax.nn.softplus(result.x[1]))
+        return {
+            'params': {'temperature': temp, 'kappa': kappa},
+            'll': -float(result.fun),
+            'n_params': 2
+        }
 
-        df_sorted = df.sort_values('total_cv_ll', ascending=False)
-        for _, row in df_sorted.iterrows():
-            print("{:<25} {:>12.1f} {:>12.1f} {:>12.1f}".format(
-                row['model'], row['mean_cv_ll'], row['std_cv_ll'], row['total_cv_ll']))
+    raise ValueError(f"Unknown model: {model_name}")
 
-    return df
+
+# =============================================================================
+# Model comparison
+# =============================================================================
+
+MODELS = ['Null', 'Distance', 'Belief', 'Coordination', 'ImagineWe']
 
 
 def main():
     import argparse
+    import time
 
-    parser = argparse.ArgumentParser(description='Compare trajectory models')
-    parser.add_argument('--subjects', nargs='+', help='Specific subjects to analyze')
-    parser.add_argument('--cv', action='store_true', help='Run cross-validation')
-    parser.add_argument('--fast', action='store_true', help='Fast mode (subsample timesteps)')
-    parser.add_argument('--subsample', type=int, default=1, help='Evaluate every Nth timestep')
-    parser.add_argument('--output', help='Save results to CSV')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--subjects', nargs='+')
+    parser.add_argument('--output')
+    parser.add_argument('--fit', action='store_true', help='Fit model parameters')
 
     args = parser.parse_args()
 
-    subsample = 10 if args.fast else args.subsample
+    print("=" * 60)
+    print("JAX MODEL COMPARISON (vmap vectorized)")
+    print("=" * 60)
 
-    if args.cv:
-        results = run_cross_validation()
+    # Load data
+    print("\nLoading trials...")
+    t0 = time.time()
+    trials = load_trials(args.subjects)
+    print(f"Loaded {len(trials)} trials ({time.time() - t0:.1f}s)")
+
+    # Add beliefs using fast JAX version
+    print("Adding beliefs (JAX batched)...", end=" ", flush=True)
+    t0 = time.time()
+    trials = add_beliefs_to_trials(trials)
+    print(f"done ({time.time() - t0:.1f}s)")
+
+    # Extract all data into batched arrays
+    print("Extracting batched data...", end=" ", flush=True)
+    t0 = time.time()
+    data = extract_all_data(trials)
+    n_obs = len(data['obs'])
+    print(f"done ({n_obs:,} observations, {time.time() - t0:.1f}s)")
+
+    # Warmup JIT
+    print("\nWarming up JIT...", end=" ", flush=True)
+    t0 = time.time()
+    _ = distance_model_ll(data)
+    _ = belief_model_ll(data)
+    _ = coordination_model_ll(data)
+    _ = imagined_we_model_ll(data)
+    print(f"done ({time.time() - t0:.1f}s)")
+
+    # Fit or evaluate models
+    results = []
+
+    if args.fit:
+        print("\nFitting models:")
+        for name in MODELS:
+            print(f"  {name}...", end=" ", flush=True)
+            t0 = time.time()
+            fit_result = fit_model(name, data)
+            elapsed = time.time() - t0
+
+            k = fit_result['n_params']
+            ll = fit_result['ll']
+            aic = 2 * k - 2 * ll
+            bic = k * np.log(n_obs) - 2 * ll
+
+            results.append({
+                'model': name,
+                'n_params': k,
+                'log_likelihood': ll,
+                'aic': aic,
+                'bic': bic,
+                'time': elapsed,
+                'params': fit_result['params']
+            })
+            print(f"LL = {ll:.1f} ({elapsed:.1f}s) params={fit_result['params']}")
     else:
-        results = run_comparison(subjects=args.subjects, subsample=subsample)
+        print("\nEvaluating models (default params):")
+        for name in MODELS:
+            print(f"  {name}...", end=" ", flush=True)
+            t0 = time.time()
+
+            if name == 'Null':
+                ll = float(null_model_ll(n_obs))
+                k = 0
+            elif name == 'Distance':
+                ll = float(distance_model_ll(data))
+                k = 2
+            elif name == 'Belief':
+                ll = float(belief_model_ll(data))
+                k = 2
+            elif name == 'Coordination':
+                ll = float(coordination_model_ll(data))
+                k = 3
+            elif name == 'ImagineWe':
+                ll = float(imagined_we_model_ll(data))
+                k = 2
+
+            elapsed = time.time() - t0
+            aic = 2 * k - 2 * ll
+            bic = k * np.log(n_obs) - 2 * ll
+
+            results.append({
+                'model': name,
+                'n_params': k,
+                'log_likelihood': ll,
+                'aic': aic,
+                'bic': bic,
+                'time': elapsed
+            })
+            print(f"LL = {ll:.1f} ({elapsed:.3f}s)")
+
+    # Print results
+    df = pd.DataFrame(results).sort_values('aic')
+    best_aic = df['aic'].iloc[0]
+
+    print("\n" + "=" * 60)
+    print("RESULTS")
+    print("=" * 60)
+    print(f"\n{'Model':<15} {'Params':>6} {'Log-Lik':>12} {'ΔAIC':>10} {'Time':>8}")
+    print("-" * 55)
+
+    for _, row in df.iterrows():
+        delta = row['aic'] - best_aic
+        print(f"{row['model']:<15} {row['n_params']:>6} {row['log_likelihood']:>12.1f} "
+              f"{delta:>10.1f} {row['time']:>7.3f}s")
+
+    print(f"\nBest model: {df.iloc[0]['model']}")
 
     if args.output:
-        results.to_csv(args.output, index=False)
-        print(f"\nResults saved to {args.output}")
+        df.to_csv(args.output, index=False)
 
 
 if __name__ == '__main__':
