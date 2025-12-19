@@ -5,6 +5,9 @@ outputs/
 data/raw/
 data/derivatives/
 
+# Local project notes
+CLAUDE.md
+
 # Generated visualization outputs
 visualization/output/
 
