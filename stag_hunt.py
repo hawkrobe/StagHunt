@@ -47,8 +47,8 @@ from data_loader import (
 )
 
 # Re-export belief models
-from models.belief_model_iw import add_iw_beliefs_batch as add_beliefs
-from models.belief_model_jax import add_beliefs_batch_fast as add_standard_beliefs
+from models.belief import add_iw_beliefs as add_beliefs
+from models.belief import add_standard_beliefs as add_standard_beliefs
 
 
 __all__ = [

@@ -35,7 +35,7 @@ from collections import defaultdict
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from stag_hunt import load_trial, find_trial_files, get_trial_info, get_outcome, RAW_DATA_DIR
-from models.belief_model_iw import add_iw_beliefs_batch
+from models.belief import add_iw_beliefs
 
 # Colors
 PLAYER1_COLOR = '#E63946'
@@ -449,7 +449,7 @@ def make_belief_overview(trials, output_file='belief_dynamics.png', n_samples=50
 
         # Run belief model on all samples at once (batched)
         trial_dfs = [t['data'] for t in sample_trials]
-        trials_with_beliefs = add_iw_beliefs_batch(trial_dfs)
+        trials_with_beliefs = add_iw_beliefs(trial_dfs)
 
         coop_beliefs = []
         defect_beliefs = []

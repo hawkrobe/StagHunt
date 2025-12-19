@@ -92,12 +92,12 @@ Examples:
 
     # Initialize belief model
     if args.model == 'iw':
-        from models.belief_model_iw import add_iw_beliefs_batch
-        belief_func = add_iw_beliefs_batch
+        from models.belief import add_iw_beliefs
+        belief_func = add_iw_beliefs
         model_desc = "Imagined We (joint goal)"
     else:
-        from models.belief_model_jax import add_beliefs_batch_fast
-        belief_func = add_beliefs_batch_fast
+        from models.belief import add_standard_beliefs
+        belief_func = add_standard_beliefs
         model_desc = "Standard (per-player intentions)"
 
     if not args.quiet:

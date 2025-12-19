@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import matplotlib.pyplot as plt
 from data_loader import load_trial, find_trial_files, get_outcome
-from models.belief_model_iw import add_iw_beliefs_batch
-from models.belief_model_jax import add_beliefs_batch_fast
+from models.belief import add_iw_beliefs
+from models.belief import add_standard_beliefs
 
 
 def main():
@@ -23,8 +23,8 @@ def main():
     trials = [load_trial(f) for f in files]
 
     print("Computing beliefs...")
-    trials = add_iw_beliefs_batch(trials)
-    trials = add_beliefs_batch_fast(trials)
+    trials = add_iw_beliefs(trials)
+    trials = add_standard_beliefs(trials)
 
     # Find trials where IW and standard beliefs diverge most
     divergence = []

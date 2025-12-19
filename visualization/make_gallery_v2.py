@@ -16,7 +16,7 @@ from collections import defaultdict
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from stag_hunt import load_trial, find_trial_files, get_trial_info, get_outcome, RAW_DATA_DIR
-from models.belief_model_iw import add_iw_beliefs_batch
+from models.belief import add_iw_beliefs
 
 # Colors
 PLAYER1_COLOR = '#E63946'
@@ -45,7 +45,7 @@ def load_trials_with_beliefs(subject=None, opponent=None, max_trials=None):
             continue
 
     # Compute beliefs in batch
-    trials_with_beliefs = add_iw_beliefs_batch(trial_dfs)
+    trials_with_beliefs = add_iw_beliefs(trial_dfs)
 
     # Build result list
     trials = []

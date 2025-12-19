@@ -37,8 +37,9 @@ import argparse
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import unified model API and data loader
-from stag_hunt import BeliefModel, load_trial, find_trial_files, get_trial_info, get_outcome, RAW_DATA_DIR
+# Import data loader and belief model
+from stag_hunt import load_trial, find_trial_files, get_trial_info, get_outcome, RAW_DATA_DIR
+from models.belief import add_standard_beliefs
 
 # ============================================================================
 # CONFIGURATION - MODIFY THESE PATHS FOR YOUR LOCAL SETUP
@@ -138,20 +139,10 @@ if args.opponent:
 if args.reward:
     print(f"  Reward filter: {args.reward}")
 
-# Initialize Bayesian model WITH DECISION-BASED INVERSE PLANNING (using unified API)
-print(f"\nInitializing Bayesian model with decision-based inverse planning:")
+# Initialize belief model parameters
+print(f"\nInitializing distance-based belief model:")
 print(f"  Prior belief (stag): {PRIOR_STAG}")
 print(f"  Belief bounds: {BELIEF_BOUNDS}")
-print(f"  Decision model parameters:")
-print(f"    Temperature: {DECISION_MODEL_PARAMS['temperature']:.3f}")
-print(f"    Timing tolerance: {DECISION_MODEL_PARAMS['timing_tolerance']:.1f} (FIXED)")
-print(f"    Action noise: {DECISION_MODEL_PARAMS['action_noise']:.1f} (FIXED)")
-model = BeliefModel(
-    inference_type='decision',
-    prior_stag=PRIOR_STAG,
-    belief_bounds=BELIEF_BOUNDS,
-    decision_model={'model_type': 'coordinated', 'params': DECISION_MODEL_PARAMS}
-)
 
 # Load all trials and run model
 trials_data = []
@@ -181,7 +172,7 @@ for idx, trial_file in enumerate(trial_files):
             df['value'] = 1.0
 
         # RUN BAYESIAN MODEL ON THIS TRIAL
-        df_with_beliefs = model.run_trial(df)
+        df_with_beliefs = add_standard_beliefs([df], prior=PRIOR_STAG, bounds=BELIEF_BOUNDS)[0]
 
         # Add trial number
         df_with_beliefs['trial'] = trial_num

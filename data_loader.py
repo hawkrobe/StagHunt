@@ -558,8 +558,8 @@ def save_all_derivatives(
 
     # Default to IW model
     if belief_func is None:
-        from models.belief_model_iw import add_iw_beliefs_batch
-        belief_func = add_iw_beliefs_batch
+        from models.belief import add_iw_beliefs
+        belief_func = add_iw_beliefs
 
     # Find and load all trials
     files = find_trial_files(data_dir, subject=subject, opponent=opponent, task_type='main')

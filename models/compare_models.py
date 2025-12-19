@@ -285,14 +285,13 @@ def extract_all_data(trials: List[pd.DataFrame]) -> Dict[str, jnp.ndarray]:
 
 def add_beliefs_to_trials(trials: List[pd.DataFrame], prior=0.5, concentration=1.5) -> List[pd.DataFrame]:
     """Add belief columns to trials using fast JAX version (both standard and IW)."""
-    from belief_model_jax import add_beliefs_batch_fast
-    from belief_model_iw import add_iw_beliefs_batch
+    from belief import add_standard_beliefs, add_iw_beliefs
 
     # Add standard beliefs (partner intention)
-    trials = add_beliefs_batch_fast(trials, prior=prior, concentration=concentration)
+    trials = add_standard_beliefs(trials, prior=prior, concentration=concentration)
 
     # Add IW beliefs (joint goal)
-    trials = add_iw_beliefs_batch(trials, prior=prior, concentration=concentration)
+    trials = add_iw_beliefs(trials, prior=prior, concentration=concentration)
 
     return trials
 

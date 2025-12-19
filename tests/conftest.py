@@ -3,7 +3,6 @@ Shared pytest fixtures for decision model tests.
 
 This module provides common setup code for all tests:
 - Trial data loading (using unified data_loader)
-- Model initialization
 - Belief computation
 """
 
@@ -17,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data_loader import load_trial, find_trial_files, load_all_trials, get_trial_info, RAW_DATA_DIR
-from models.belief_model_distance import BayesianIntentionModel
+from models.belief import add_standard_beliefs, add_iw_beliefs
 
 
 @pytest.fixture
@@ -43,25 +42,15 @@ def load_trial_fn():
 
 
 @pytest.fixture
-def belief_model():
-    """Initialize standard belief model."""
-    return BayesianIntentionModel(
-        prior_stag=0.5,
-        concentration=1.5,
-        belief_bounds=(0.01, 0.99)
-    )
-
-
-@pytest.fixture
 def trial_data(single_trial_file, load_trial_fn):
     """Load a single trial's data."""
     return load_trial_fn(single_trial_file)
 
 
 @pytest.fixture
-def trial_with_beliefs(trial_data, belief_model):
+def trial_with_beliefs(trial_data):
     """Load trial data with beliefs computed."""
-    return belief_model.run_trial(trial_data)
+    return add_standard_beliefs([trial_data])[0]
 
 
 @pytest.fixture
@@ -71,9 +60,9 @@ def all_trials_data(trial_files, load_trial_fn):
 
 
 @pytest.fixture
-def all_trials_with_beliefs(all_trials_data, belief_model):
+def all_trials_with_beliefs(all_trials_data):
     """Load all trials with beliefs computed."""
-    return [belief_model.run_trial(trial) for trial in all_trials_data]
+    return add_standard_beliefs(all_trials_data)
 
 
 # New fixtures for accessing trials by condition
