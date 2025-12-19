@@ -465,7 +465,7 @@ def save_derivative(
     trial_data: pd.DataFrame,
     trial_info: Dict,
     output_dir: str = None,
-    suffix: str = '_with_beliefs'
+    simple_names: bool = True
 ) -> str:
     """
     Save a processed trial with model regressors to derivatives directory.
@@ -478,8 +478,8 @@ def save_derivative(
         Trial metadata from get_trial_info()
     output_dir : str
         Output directory (default: data/derivatives)
-    suffix : str
-        Suffix to add to filename (default: '_with_beliefs')
+    simple_names : bool
+        Use simple filenames like sub-120_run-01_trial-01.tsv (default: True)
 
     Returns:
     --------
@@ -497,13 +497,13 @@ def save_derivative(
     os.makedirs(sub_dir, exist_ok=True)
 
     # Generate output filename
-    if trial_info.get('filepath'):
-        # Use original filename with suffix
-        orig_name = os.path.basename(trial_info['filepath'])
-        base_name = orig_name.rsplit('.', 1)[0]  # Remove extension
-        out_name = f"{base_name}{suffix}.tsv"
+    if simple_names and trial_info.get('subject'):
+        # Simple de-identified filename
+        run = trial_info.get('run', '01')
+        trial = trial_info.get('trial', 1)
+        out_name = f"sub-{trial_info['subject']}_run-{run}_trial-{trial:02d}.tsv"
     else:
-        # Generate a name
+        # Fallback to descriptive name
         parts = []
         if trial_info.get('subject'):
             parts.append(f"sub-{trial_info['subject']}")
@@ -511,7 +511,7 @@ def save_derivative(
             parts.append(f"opponent-{trial_info['opponent']}")
         if trial_info.get('trial'):
             parts.append(f"trial-{trial_info['trial']:02d}")
-        out_name = '_'.join(parts) + f"{suffix}.tsv" if parts else f"trial{suffix}.tsv"
+        out_name = '_'.join(parts) + ".tsv" if parts else "trial.tsv"
 
     out_path = os.path.join(sub_dir, out_name)
 
@@ -589,6 +589,16 @@ def save_all_derivatives(
     saved_paths = []
     for i, (trial, info) in enumerate(zip(trials_with_beliefs, infos)):
         try:
+            # Add onset column (relative time from trial start, in seconds)
+            trial['onset'] = trial['time_point'] - trial['time_point'].iloc[0]
+
+            # Add metadata columns
+            trial['subject'] = info.get('subject', '')
+            trial['run'] = info.get('run', '')
+            trial['trial_num'] = info.get('trial', '')
+            trial['opponent'] = info.get('opponent', '')
+            trial['reward'] = info.get('reward', '')
+
             # Add outcome info
             outcome = get_outcome(trial)
             trial['outcome'] = outcome['outcome']
