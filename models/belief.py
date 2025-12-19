@@ -195,6 +195,139 @@ def add_iw_beliefs(trials: List[pd.DataFrame], prior=0.5, concentration=1.5,
     return results
 
 
+# =============================================================================
+# Additional Regressors (distances, prediction errors)
+# =============================================================================
+
+def add_distance_regressors(trials: List[pd.DataFrame]) -> List[pd.DataFrame]:
+    """Add distance-to-target regressors for low-level visual control.
+
+    Adds columns:
+    - p1_dist_stag, p1_dist_rabbit: Player 1's Euclidean distance to targets
+    - p2_dist_stag, p2_dist_rabbit: Player 2's Euclidean distance to targets
+    - player_distance: Distance between the two players
+    """
+    results = []
+    for trial in trials:
+        result = trial.copy()
+
+        # Player 1 distances to targets
+        result['p1_dist_stag'] = np.sqrt(
+            (trial['player1_x'] - trial['stag_x'])**2 +
+            (trial['player1_y'] - trial['stag_y'])**2
+        )
+        result['p1_dist_rabbit'] = np.sqrt(
+            (trial['player1_x'] - trial['rabbit_x'])**2 +
+            (trial['player1_y'] - trial['rabbit_y'])**2
+        )
+
+        # Player 2 distances to targets
+        result['p2_dist_stag'] = np.sqrt(
+            (trial['player2_x'] - trial['stag_x'])**2 +
+            (trial['player2_y'] - trial['stag_y'])**2
+        )
+        result['p2_dist_rabbit'] = np.sqrt(
+            (trial['player2_x'] - trial['rabbit_x'])**2 +
+            (trial['player2_y'] - trial['rabbit_y'])**2
+        )
+
+        # Inter-player distance
+        result['player_distance'] = np.sqrt(
+            (trial['player1_x'] - trial['player2_x'])**2 +
+            (trial['player1_y'] - trial['player2_y'])**2
+        )
+
+        results.append(result)
+    return results
+
+
+def add_speed_regressors(trials: List[pd.DataFrame]) -> List[pd.DataFrame]:
+    """Add player speed regressors.
+
+    Adds columns:
+    - p1_speed: Player 1's instantaneous speed (pixels/timestep)
+    - p2_speed: Player 2's instantaneous speed (pixels/timestep)
+
+    First timestep speed is 0.
+    """
+    results = []
+    for trial in trials:
+        result = trial.copy()
+
+        # Player 1 speed
+        dx1 = np.diff(trial['player1_x'].values, prepend=trial['player1_x'].values[0])
+        dy1 = np.diff(trial['player1_y'].values, prepend=trial['player1_y'].values[0])
+        result['p1_speed'] = np.sqrt(dx1**2 + dy1**2)
+
+        # Player 2 speed
+        dx2 = np.diff(trial['player2_x'].values, prepend=trial['player2_x'].values[0])
+        dy2 = np.diff(trial['player2_y'].values, prepend=trial['player2_y'].values[0])
+        result['p2_speed'] = np.sqrt(dx2**2 + dy2**2)
+
+        results.append(result)
+    return results
+
+
+def add_prediction_errors(trials: List[pd.DataFrame]) -> List[pd.DataFrame]:
+    """Add belief prediction error regressors.
+
+    Adds columns (depending on what belief columns exist):
+    - joint_goal_pe: Change in joint goal belief (IW model)
+    - p1_belief_pe, p2_belief_pe: Change in per-player beliefs (standard model)
+
+    Prediction error is Δbelief: belief(t) - belief(t-1)
+    First timestep PE is 0.
+    """
+    results = []
+    for trial in trials:
+        result = trial.copy()
+
+        # IW model prediction error
+        if 'joint_goal_stag' in trial.columns:
+            pe = np.diff(trial['joint_goal_stag'].values, prepend=trial['joint_goal_stag'].values[0])
+            result['joint_goal_pe'] = pe
+
+        # Standard model prediction errors
+        if 'p1_belief_p2_stag' in trial.columns:
+            pe1 = np.diff(trial['p1_belief_p2_stag'].values, prepend=trial['p1_belief_p2_stag'].values[0])
+            result['p1_belief_pe'] = pe1
+
+        if 'p2_belief_p1_stag' in trial.columns:
+            pe2 = np.diff(trial['p2_belief_p1_stag'].values, prepend=trial['p2_belief_p1_stag'].values[0])
+            result['p2_belief_pe'] = pe2
+
+        results.append(result)
+    return results
+
+
+def add_all_regressors(trials: List[pd.DataFrame], prior=0.5, concentration=1.5,
+                       bounds=(0.01, 0.99)) -> List[pd.DataFrame]:
+    """Add all regressors: beliefs, distances, speeds, prediction errors.
+
+    Convenience function that adds everything needed for neural encoding analysis.
+
+    Columns added:
+    - joint_goal_stag: IW model belief
+    - p1_belief_p2_stag, p2_belief_p1_stag: Standard per-player beliefs
+    - p1_dist_stag, p1_dist_rabbit, p2_dist_stag, p2_dist_rabbit: Target distances
+    - player_distance: Inter-player distance
+    - p1_speed, p2_speed: Player speeds
+    - joint_goal_pe, p1_belief_pe, p2_belief_pe: Belief prediction errors
+    """
+    # Add both belief models
+    trials = add_iw_beliefs(trials, prior=prior, concentration=concentration, bounds=bounds)
+    trials = add_standard_beliefs(trials, prior=prior, concentration=concentration, bounds=bounds)
+
+    # Add low-level regressors
+    trials = add_distance_regressors(trials)
+    trials = add_speed_regressors(trials)
+
+    # Add prediction errors (must come after beliefs)
+    trials = add_prediction_errors(trials)
+
+    return trials
+
+
 # Aliases for backwards compatibility
 add_beliefs_batch_fast = add_standard_beliefs
 add_iw_beliefs_batch = add_iw_beliefs

@@ -3,22 +3,21 @@
 Generate Derivative Files with Model Regressors
 
 This script processes raw trial data and saves derivatives with computed
-belief regressors for neural analysis.
+regressors for neural encoding analysis.
 
 Output columns added:
-- p1_belief_p2_stag: Player 1's belief that Player 2 is going for stag
-- p2_belief_p1_stag: Player 2's belief that Player 1 is going for stag
-- p1_movement_angle: Player 1's movement direction (radians)
-- p2_movement_angle: Player 2's movement direction (radians)
+- joint_goal_stag: IW model belief (P(stag is joint goal))
+- p1_belief_p2_stag, p2_belief_p1_stag: Standard per-player beliefs
+- joint_goal_pe, p1_belief_pe, p2_belief_pe: Belief prediction errors (Δbelief)
+- p1_dist_stag, p1_dist_rabbit, p2_dist_stag, p2_dist_rabbit: Distance to targets
+- player_distance: Distance between players
+- p1_speed, p2_speed: Player movement speeds
 - outcome: Trial outcome (cooperation/mutual_defection/etc.)
 
 Usage:
 ------
-# Generate all derivatives with distance-based belief model
+# Generate all derivatives (all regressors)
 python generate_derivatives.py
-
-# Use planning-based model (recommended, but requires fitted params)
-python generate_derivatives.py --model planning
 
 # Filter by subject
 python generate_derivatives.py --subject 120
@@ -58,12 +57,6 @@ Examples:
     )
 
     parser.add_argument(
-        '--model', '-m',
-        choices=['standard', 'iw'],
-        default='iw',
-        help='Belief model type: standard (per-player) or iw (joint goal, default)'
-    )
-    parser.add_argument(
         '--subject', '-s',
         help='Filter by subject ID (e.g., 120, 255)'
     )
@@ -90,21 +83,15 @@ Examples:
 
     args = parser.parse_args()
 
-    # Initialize belief model
-    if args.model == 'iw':
-        from models.belief import add_iw_beliefs
-        belief_func = add_iw_beliefs
-        model_desc = "Imagined We (joint goal)"
-    else:
-        from models.belief import add_standard_beliefs
-        belief_func = add_standard_beliefs
-        model_desc = "Standard (per-player intentions)"
+    # Use add_all_regressors to include everything
+    from models.belief import add_all_regressors
+    belief_func = add_all_regressors
 
     if not args.quiet:
         print("=" * 60)
         print("Generating Derivative Files")
         print("=" * 60)
-        print(f"\nModel:  {model_desc}")
+        print(f"\nRegressors: beliefs (IW + standard), distances, prediction errors")
         print(f"Input:  {args.input}")
         print(f"Output: {args.output}")
         if args.subject:
